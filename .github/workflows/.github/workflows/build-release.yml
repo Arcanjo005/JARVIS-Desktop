@@ -1,0 +1,67 @@
+name: Build and Publish JARVIS Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versão do JARVIS"
+        required: true
+        default: "1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Baixar projeto
+        uses: actions/checkout@v6
+
+      - name: Preparar Python do compilador
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Instalar Inno Setup
+        shell: powershell
+        run: choco install innosetup --no-progress -y
+
+      - name: Compilar JARVIS Desktop
+        shell: powershell
+        run: |
+          ./build/build_windows.ps1 `
+            -Version "${{ inputs.version }}" `
+            -Repository "${{ github.repository }}" `
+            -RunNumber "${{ github.run_number }}"
+
+      - name: Salvar instalador
+        uses: actions/upload-artifact@v4
+        with:
+          name: JARVIS-Desktop-${{ inputs.version }}
+          path: |
+            release/JARVIS_Setup_${{ inputs.version }}.exe
+            release/JARVIS_Setup_${{ inputs.version }}.exe.sha256
+          if-no-files-found: error
+
+      - name: Criar Release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ inputs.version }}"
+
+          gh release create $tag `
+            --draft `
+            --target "${{ github.sha }}" `
+            --title "JARVIS Desktop ${{ inputs.version }}" `
+            --notes-file "RELEASE_NOTES.md"
+
+          gh release upload $tag `
+            "release/JARVIS_Setup_${{ inputs.version }}.exe" `
+            "release/JARVIS_Setup_${{ inputs.version }}.exe.sha256"
+
+          gh release edit $tag --draft=false --latest
