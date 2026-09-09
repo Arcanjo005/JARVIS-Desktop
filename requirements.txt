@@ -1,0 +1,63 @@
+# J.A.R.V.I.S. - Dependências Otimizadas - Mark 13 Final
+# Interface Gráfica
+customtkinter==5.2.2
+
+# IA e Visão Computacional
+Pillow==12.1.1
+
+# Voz e Áudio
+SpeechRecognition==3.10.4
+pyttsx3==2.90
+pycaw>=20230407
+comtypes>=1.2.0
+
+# Controle de Sistema e Hardware - Mark 13
+pyautogui==0.9.54
+screen-brightness-control>=0.1
+psutil==7.2.2
+
+# Utilitários do Sistema - Mark 13
+pyperclip>=1.8.2
+
+# Produtividade - Mark 13 Fase 2
+googletrans==4.0.1
+yfinance>=0.2.18
+requests>=2.31.0
+
+
+# Web e Scraping - Mark 13 Final
+beautifulsoup4>=4.12.3
+
+
+# Banco de Dados e Ambiente
+python-dotenv==1.0.1
+
+# Comunicação (opcional)
+
+# Processamento Numérico
+numpy==2.4.2
+
+# Sistema Windows
+wmi>=1.5.1
+pywin32>=306
+
+# Visualização de Dados (opcional)
+
+# Interface Alternativa (opcional)
+
+
+# Runtime JARVIS Build 13 (pipeline atual)
+google-genai>=2.14,<3
+faster-whisper>=1.2,<2
+sounddevice>=0.5,<1
+vosk>=0.3.45,<1
+edge-tts>=7,<8
+websockets>=15,<17
+pygame>=2.6,<3
+webrtcvad-wheels>=2.0.14,<3
+PySide6>=6.8,<7
+
+mss>=10,<11
+
+# Desktop updater / semantic version comparison
+packaging>=24,<27

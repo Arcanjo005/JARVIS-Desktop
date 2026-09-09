@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "repository": "AUTO",
+  "installer_asset_prefix": "JARVIS_Setup_",
+  "check_on_startup": true,
+  "startup_delay_ms": 2500
+}
