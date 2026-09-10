@@ -1,0 +1,32 @@
+{
+  "format": 1,
+  "runtime_api": 1,
+  "bootstrap_version": "1.1.0",
+  "description": "Arquivos imutaveis por hot update. Alterou qualquer um: gere build completo.",
+  "locked_files": {
+    "requirements.txt": "750a6a028d75965a36c5248a97a13cd277ff6002c4e4d0740a1bafea8fd5281b",
+    "main.py": "0cc2342d9fea805e97cb81270a71da6a15e95651e0e417fa6a1e3db5cdf8b497",
+    "hot_update_runtime.py": "08ef3d992dde8687fbe9128cc0ba94d1ed0d6fa5d2862a53d245f4041c88ba8a",
+    "update_config.json": "5f0d75691e73a4e1498e3c46f1f6b3b64d16ac1f8a58cbbb9d1d831565d974cf",
+    "jarvis.ico": "2ef61da98da7b8ac90290c774abcf632b135003ea98e3fc85df3a812bdab7b4c",
+    "data/app_catalog_global_v7.json": "18c84c0bb68f6d5296b6e06b6c2bf934e185c15e871383c0e5a9681390a780b6",
+    "data/app_catalog_global_v7.meta.json": "f101e1061b4babacc6f8edbee216bbe0635116a4cba53a6c3f7d8b5a80869bf8",
+    "data/voice_models/vosk-model-small-pt-0.3/Gr.fst": "d81023936f5557c06930802b1db4880f56d6ac51b16ed4e5060ceba06895442c",
+    "data/voice_models/vosk-model-small-pt-0.3/HCLr.fst": "8b45be1fa72913d61e37ac0b411177803848f4cda7728f74139b39acd1c0cf36",
+    "data/voice_models/vosk-model-small-pt-0.3/README": "85353085fa2096ef12cac654fa9534b186bef9b56a61f544da3ebfbd006b78bb",
+    "data/voice_models/vosk-model-small-pt-0.3/disambig_tid.int": "ca8970bc50b8ae2452749f75f5a12049e511075f9fc3f63acc1526c280a33748",
+    "data/voice_models/vosk-model-small-pt-0.3/final.mdl": "3e10e43ec01cf8d968bcc24c626a2eae2bfa77863bee82f36a554854afa1f147",
+    "data/voice_models/vosk-model-small-pt-0.3/ivector/final.dubm": "28dcdc395b13a2085d20f7a2e850ef7e5216ba33ded76391b9690dd60f5143de",
+    "data/voice_models/vosk-model-small-pt-0.3/ivector/final.ie": "9345786636c358c9539591da71fb685ae82d8a96ce5de533fb8ac5fdafa965f0",
+    "data/voice_models/vosk-model-small-pt-0.3/ivector/final.mat": "e310571390a3183718fce914bb022d297777c7ed860892a1812b576a698ec420",
+    "data/voice_models/vosk-model-small-pt-0.3/ivector/global_cmvn.stats": "8848c2dcf9919fbb3db574cbce59f980c3b11107c29adfa1fc42a4faed27e1a8",
+    "data/voice_models/vosk-model-small-pt-0.3/ivector/online_cmvn.conf": "a2f3571754b64297cb7efb2e7ca3df61995c5a45fcbb97188f90613552bb2dfe",
+    "data/voice_models/vosk-model-small-pt-0.3/ivector/splice.conf": "9f0c5f7c82d18eaf25d8bce470efa9f7741f88411fe428774bc0a9bb69a24756",
+    "data/voice_models/vosk-model-small-pt-0.3/mfcc.conf": "d3d4c517da7e6d02ed85803eebf77bca3f7f48c9ab6dc035013250b36187f274",
+    "data/voice_models/vosk-model-small-pt-0.3/phones.txt": "dc207b906747b59e9e3da0af30e8f8d6712c9897ad7df06929d4b2cae7ee13f1",
+    "data/voice_models/vosk-model-small-pt-0.3/word_boundary.int": "b8f981d84d8765fb15003ac54ec0f9599efa65a00d6d4d60086e5969ad45ff01",
+    "build/asset_parts/speaker_guard_campplus.onnx.part01": "d31d0578fe2bc2e4046501e8201466bae9503b5fc4083a07d64b1e2cbbb3168f",
+    "build/asset_parts/speaker_guard_campplus.onnx.part02": "25563ab9d434bbd8a20c9006abbc9bbf7ae2463aa6e732c2b2e6c2c9060b20ee",
+    "build/requirements-build.txt": "15be7634d71391969fd14d4ed787bc552915cadd3efcc783fda9996e6e606c69"
+  }
+}

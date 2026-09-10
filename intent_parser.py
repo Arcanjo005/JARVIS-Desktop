@@ -8,6 +8,7 @@ Objetivos:
 """
 from __future__ import annotations
 
+import os
 import re
 import time
 import unicodedata
@@ -64,7 +65,7 @@ def _is_known_local_app_term(value: str) -> bool:
     now = time.monotonic()
     if load_voice_terms is not None and (not _DYNAMIC_APP_TERMS or now - _DYNAMIC_APP_TERMS_AT > 60.0):
         try:
-            terms = load_voice_terms(str(Path(__file__).resolve().parent), limit=1200)
+            terms = load_voice_terms(str(Path(os.environ.get("JARVIS_APP_DIR") or Path(__file__).resolve().parent)), limit=1200)
             _DYNAMIC_APP_TERMS = {normalized_key(term) for term in terms if normalized_key(term)}
             _DYNAMIC_APP_TERMS_AT = now
         except Exception:

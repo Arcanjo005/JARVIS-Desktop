@@ -75,10 +75,16 @@ if ($LASTEXITCODE -ne 0) {
     throw "WebRTC VAD instalado de forma incompleta: webrtcvad-wheels/webrtcvad/_webrtcvad"
 }
 
+Write-Host "[JARVIS] Validando dependencias nativas de voz e bandeja"
+& python -c "import sounddevice, vosk, pystray, pystray._win32, send2trash; print('sounddevice=' + str(getattr(sounddevice, '__version__', 'ok'))); print('vosk=ok'); print('pystray=ok'); print('send2trash=ok')"
+if ($LASTEXITCODE -ne 0) {
+    throw "Runtime Windows incompleto: sounddevice/vosk/pystray/send2trash nao puderam ser importados antes do PyInstaller."
+}
+
 Write-Host "[JARVIS] Executando gates de regressao antes de empacotar"
 & python -m compileall -q .
 if ($LASTEXITCODE -ne 0) { throw "compileall falhou com codigo $LASTEXITCODE" }
-foreach ($TestFile in @("jarvis_desktop_selftest.py", "jarvis_build16_selftest.py", "jarvis_v8_selftest.py")) {
+foreach ($TestFile in @("jarvis_hot_update_selftest.py", "jarvis_desktop_selftest.py", "jarvis_build16_selftest.py", "jarvis_v8_selftest.py")) {
     & python $TestFile
     if ($LASTEXITCODE -ne 0) { throw "$TestFile falhou com codigo $LASTEXITCODE" }
 }
@@ -149,7 +155,10 @@ $PyInstallerArgs = @(
     "--add-data", "$UpdateConfig;.",
     "--add-data", "$IconFile;.",
     "--collect-all", "customtkinter",
+    "--collect-all", "sounddevice",
+    "--collect-all", "vosk",
     "--collect-submodules", "edge_tts",
+    "--hidden-import", "pystray._win32",
     "--hidden-import", "_webrtcvad",
     "--hidden-import", "win32timezone",
     "--hidden-import", "pythoncom",
@@ -170,6 +179,87 @@ if (!(Test-Path -LiteralPath $ExePath)) {
 Assert-Exists (Join-Path $DistDir "JARVIS\data") "data empacotado"
 Assert-Exists (Join-Path $DistDir "JARVIS\plugins") "plugins empacotados"
 Assert-Exists (Join-Path $DistDir "JARVIS\update_config.json") "update_config empacotado"
+
+# Smoke test do EXE FINAL, não do ambiente Python do runner. Isso pega
+# exatamente as regressões que só aparecem depois do PyInstaller: PortAudio,
+# Vosk/modelo de wake, WebRTC VAD, pystray/Win32 e overlay Qt ausentes.
+$RuntimeReport = Join-Path $WorkDir "runtime-selftest.json"
+Remove-Item -Force $RuntimeReport -ErrorAction SilentlyContinue
+Write-Host "[JARVIS] Testando runtime congelado antes do instalador"
+$RuntimeProcess = Start-Process -FilePath $ExePath -ArgumentList @("--runtime-selftest", $RuntimeReport) -Wait -PassThru
+if ($RuntimeProcess.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $RuntimeReport) {
+        Write-Host (Get-Content -LiteralPath $RuntimeReport -Raw)
+    }
+    throw "JARVIS.exe falhou no runtime-selftest com codigo $($RuntimeProcess.ExitCode)."
+}
+Assert-Exists $RuntimeReport "relatorio runtime-selftest"
+$RuntimeSmoke = Get-Content -LiteralPath $RuntimeReport -Raw | ConvertFrom-Json
+if (-not $RuntimeSmoke.ok) {
+    Write-Host (Get-Content -LiteralPath $RuntimeReport -Raw)
+    throw "JARVIS.exe foi gerado, mas voz/bandeja/overlay nao estao completos no runtime congelado."
+}
+Write-Host "[JARVIS] Runtime congelado validado: voz + bandeja + overlay presentes"
+
+# Prova a arquitetura de hot update no EXE FINAL. A partir do PyInstaller 6.22
+# o importador é baseado em sys.path; este gate impede publicar uma base em que
+# os módulos do AppData não consigam sobrepor o PYZ congelado.
+$HotSmokeRoot = Join-Path $WorkDir "hot-runtime-smoke"
+$HotSmokeLocal = Join-Path $HotSmokeRoot "localappdata"
+$HotSmokeZip = Join-Path $HotSmokeRoot "hot-smoke.zip"
+$HotSmokeBuilder = Join-Path $HotSmokeRoot "make_hot_smoke.py"
+$HotSmokeReport = Join-Path $HotSmokeRoot "runtime-selftest-hot.json"
+Remove-Item -Recurse -Force $HotSmokeRoot -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $HotSmokeRoot, $HotSmokeLocal | Out-Null
+$HotSmokePython = @'
+import hashlib, json, sys, zipfile
+from pathlib import Path
+out = Path(sys.argv[1])
+version = "99.99.99"
+data = (
+    'VERSION = "99.99.99"\n'
+    'BUILD = "ci-hot-import"\n'
+    'CHANNEL = "stable"\n'
+    'PUBLIC_NAME = "JARVIS"\n'
+    'INTERNAL_NAME = "JARVIS"\n'
+).encode("utf-8")
+manifest = {
+    "format": 1, "runtime_api": 1, "version": version,
+    "minimum_bootstrap": "1.1.0",
+    "files": [{"path": "jarvis_version.py", "size": len(data),
+               "sha256": hashlib.sha256(data).hexdigest()}],
+}
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("jarvis_version.py", data)
+    z.writestr("runtime_manifest.json", json.dumps(manifest))
+'@
+Set-Content -LiteralPath $HotSmokeBuilder -Value $HotSmokePython -Encoding utf8
+& python $HotSmokeBuilder $HotSmokeZip
+if ($LASTEXITCODE -ne 0) { throw "Nao consegui criar pacote hot de smoke test." }
+
+$SavedLocalAppData = $env:LOCALAPPDATA
+$SavedHotExpected = $env:JARVIS_EXPECT_HOT_VERSION
+try {
+    $env:LOCALAPPDATA = $HotSmokeLocal
+    & python -c "from hot_update_runtime import install_hot_package; import sys; install_hot_package(sys.argv[1], expected_version='99.99.99')" $HotSmokeZip
+    if ($LASTEXITCODE -ne 0) { throw "Nao consegui preparar hot runtime sintetico para o EXE." }
+    $env:JARVIS_EXPECT_HOT_VERSION = "99.99.99"
+    $HotProcess = Start-Process -FilePath $ExePath -ArgumentList @("--runtime-selftest", $HotSmokeReport) -Wait -PassThru
+    if ($HotProcess.ExitCode -ne 0) {
+        if (Test-Path -LiteralPath $HotSmokeReport) { Write-Host (Get-Content -LiteralPath $HotSmokeReport -Raw) }
+        throw "JARVIS.exe nao conseguiu carregar codigo pelo Hot Runtime (codigo $($HotProcess.ExitCode))."
+    }
+    $HotSmoke = Get-Content -LiteralPath $HotSmokeReport -Raw | ConvertFrom-Json
+    if (-not $HotSmoke.ok -or -not $HotSmoke.checks.hot_runtime_import_precedence) {
+        Write-Host (Get-Content -LiteralPath $HotSmokeReport -Raw)
+        throw "Import precedence do Hot Runtime nao foi comprovada no EXE congelado."
+    }
+    Write-Host "[JARVIS] Hot Runtime validado no EXE: AppData sobrepoe o bundle com seguranca"
+}
+finally {
+    $env:LOCALAPPDATA = $SavedLocalAppData
+    $env:JARVIS_EXPECT_HOT_VERSION = $SavedHotExpected
+}
 
 $RuntimeDirs = @(
     (Join-Path $DistDir "JARVIS\data"),

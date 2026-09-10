@@ -373,7 +373,7 @@ def _run_child():
             self.target_y = None
             self.move_mode = False
             self.drag_offset = None
-            self.position_path = Path(__file__).resolve().parent / "data" / "overlay_position.json"
+            self.position_path = Path(os.environ.get("JARVIS_APP_DIR") or Path(__file__).resolve().parent) / "data" / "overlay_position.json"
 
             self.timer = QTimer(self)
             self.timer.timeout.connect(self._tick)

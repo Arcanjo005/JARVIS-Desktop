@@ -37,7 +37,8 @@ class MemoryStore:
         if db_path:
             self.db_path = db_path
         else:
-            data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+            app_dir = os.environ.get("JARVIS_APP_DIR") or os.path.dirname(os.path.abspath(__file__))
+            data_dir = os.path.join(app_dir, "data")
             os.makedirs(data_dir, exist_ok=True)
             canonical = os.path.join(data_dir, "jarvis_memory.db")
             legacy = os.path.join(data_dir, "zero_memory.db")

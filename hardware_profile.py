@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 
 class HardwareProfile:
     def __init__(self, project_dir: str | os.PathLike | None = None, logger=None):
-        self.project_dir = Path(project_dir or Path(__file__).resolve().parent)
+        self.project_dir = Path(project_dir or os.environ.get("JARVIS_APP_DIR") or Path(__file__).resolve().parent)
         self.logger = logger
         self.data_dir = self.project_dir / "data"
         self.data_dir.mkdir(parents=True, exist_ok=True)

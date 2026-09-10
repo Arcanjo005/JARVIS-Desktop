@@ -1,0 +1,76 @@
+JARVIS DESKTOP 1.1.0 - BASE ESTAVEL + HOT UPDATE
+=================================================
+
+POR QUE ESTA VERSAO EXISTE
+--------------------------
+A instalacao 1.0.1 revelou regressões que so apareceram no EXE:
+- bandeja do Windows ausente;
+- JARVIS podia ficar invisivel e so encerrar pelo Gerenciador de Tarefas;
+- wake word/microfone podia falhar sem recuperar;
+- alguns dispositivos Windows recusam captura direta em 16 kHz.
+
+A 1.1.0 corrige esses pontos e instala o bootstrap de Hot Runtime.
+
+IMPORTANTE: E NECESSARIO UM ULTIMO BUILD COMPLETO
+-------------------------------------------------
+A versao 1.0.1 ainda nao possui o bootstrap seguro necessario para aplicar
+codigo Python externo ao EXE. Por isso a 1.1.0 precisa ser compilada uma vez
+como instalador completo.
+
+Depois de instalar a 1.1.0, mudancas normais de GUI, conversa, voz, comandos,
+plugins centrais e bugs poderao ser publicadas como Hot Update pequeno, sem
+PyInstaller/Windows build completo.
+
+COMO ATUALIZAR O REPOSITORIO
+----------------------------
+1. Extraia este ZIP em uma pasta vazia.
+2. No GitHub, na raiz do repositorio JARVIS-Desktop, use Add file > Upload files.
+3. Envie O CONTEUDO desta pasta mantendo a estrutura e substitua os arquivos
+   existentes. Nao apague os modelos/asset_parts que ja estao no repositorio.
+4. Commit changes.
+
+ULTIMO BUILD COMPLETO
+---------------------
+Actions > Build FULL JARVIS Installer (runtime/dependencies) > Run workflow
+Version: 1.1.0
+
+Baixe em Releases:
+JARVIS_Setup_1.1.0.exe
+
+Instale por cima da versao atual. O destino continua C:\JARVIS.
+
+TESTE APOS INSTALAR 1.1.0
+-------------------------
+- Abra apenas uma instancia do JARVIS.
+- Confirme o icone na setinha da bandeja do Windows.
+- Feche pelo X: se a bandeja estiver viva, ele deve ocultar; pelo menu da
+  bandeja, "Sair do JARVIS" deve encerrar o processo.
+- Fale "Oi Jarvis" / "Ei Jarvis".
+- Teste tambem "Ouvir agora" no menu da bandeja.
+- Se o microfone so aceitar 44,1/48 kHz, o JARVIS deve reamostrar para 16 kHz.
+
+DAQUI PARA FRENTE: UPDATE RAPIDO
+--------------------------------
+Para uma mudanca comum, depois de alterar/commitar o codigo:
+Actions > Publish JARVIS Hot Update (fast) > Run workflow
+Version: 1.1.1 (depois 1.1.2, 1.1.3...)
+Minimum bootstrap: 1.1.0
+
+O workflow gera um JARVIS_HotUpdate_X.Y.Z.zip pequeno. O JARVIS 1.1.0 consulta
+as Releases, mostra o botao ATUALIZAR, baixa, valida SHA-256, ativa de forma
+atomica e reinicia. Se o novo runtime falhar duas vezes no boot, volta para a
+versao anterior automaticamente.
+
+QUANDO AINDA PRECISA BUILD COMPLETO
+-----------------------------------
+- requirements.txt / dependencias;
+- main.py (bootstrap congelado);
+- hot_update_runtime.py;
+- update_config.json / runtime API;
+- modelos/assets protegidos;
+- toolchain bloqueada da base.
+
+O builder de Hot Update verifica hashes e recusa publicar se um desses arquivos
+mudou; assim ele nao transforma uma mudanca de runtime em update rapido por engano.
+
+NAO PUBLIQUE 1.1.1 ANTES DE INSTALAR A BASE 1.1.0.

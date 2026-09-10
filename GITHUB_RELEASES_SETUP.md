@@ -1,30 +1,34 @@
-# JARVIS Desktop - GitHub Releases sem Git/Python no PC do usuário
+# Publicar JARVIS Desktop no GitHub Releases
 
-## Primeira publicação
+## Primeira base Hot Runtime: 1.1.0
 
-1. Crie no GitHub um repositório público, por exemplo `JARVIS-Desktop`.
-2. Extraia o pacote **GitHub Ready** e envie o conteúdo da pasta para a raiz do repositório. A pasta `.github` também precisa ser enviada. O pacote foi reduzido para menos de 100 arquivos e nenhum arquivo passa de 25 MiB, justamente para caber no upload pelo navegador.
-3. Abra **Actions** > **Build and Publish JARVIS Desktop**.
-4. Clique em **Run workflow**.
-5. Informe a versão, por exemplo `1.0.0`, e execute.
-6. O GitHub monta o Windows EXE, cria `JARVIS_Setup_1.0.0.exe`, calcula SHA-256 e publica a Release.
+A versão 1.1.0 precisa de **um último build completo**, porque adiciona dependências/runtime que a 1.0.1 não possui (bandeja `pystray`, bootstrap de Hot Runtime e validações do executável congelado).
 
-O nome do seu repositório é inserido automaticamente no JARVIS durante o build. Não é necessário editar `update_config.json` manualmente. Publique as versões como releases normais (não prerelease), pois o botão automático acompanha a release estável mais recente.
+1. Envie os arquivos desta atualização para a raiz do repositório, preservando as pastas.
+2. Abra **Actions > Build FULL JARVIS Installer (runtime/dependencies)**.
+3. Use a versão `1.1.0`.
+4. Aguarde o job ficar verde.
+5. Baixe `JARVIS_Setup_1.1.0.exe` em Releases e instale por cima da versão atual.
 
-## Próxima versão
+O build completo é propositalmente rígido: antes do Inno Setup ele executa `JARVIS.exe --runtime-selftest` e valida módulos nativos de voz, Vosk, WebRTC VAD, bandeja Win32, overlay Qt e os assets do wake word. Também cria um Hot Runtime sintético e prova no próprio EXE que o código em `%LOCALAPPDATA%\JARVIS\runtime` consegue sobrepor o bundle.
 
-Depois que o código novo estiver no repositório:
+## Próximas versões normais: sem PyInstaller
 
-1. Abra **Actions** > **Build and Publish JARVIS Desktop**.
-2. Use um número maior, por exemplo `1.0.1`.
-3. Execute o workflow.
+Para correções de interface, conversa, voz, comandos e lógica Python:
 
-Quem já tiver o JARVIS receberá o botão **ATUALIZAR 1.0.1**. O aplicativo baixa o instalador da nova Release, valida o SHA-256, executa a atualização silenciosa e reinicia.
+1. Atualize os fontes no repositório.
+2. Abra **Actions > Publish JARVIS Hot Update (fast)**.
+3. Informe uma versão nova, por exemplo `1.1.1`.
+4. Mantenha `minimum_bootstrap` em `1.1.0` enquanto a base não mudar.
+5. O GitHub roda regressões rápidas e publica `JARVIS_HotUpdate_1.1.1.zip`, `.json` e `.sha256`.
+6. O JARVIS instalado detecta a Release e mostra o botão **ATUALIZAR**.
 
-## Chave Gemini
+Esse fluxo não recompila Python, Qt, Whisper, Vosk ou o EXE. O pacote típico fica na ordem de centenas de KiB.
 
-A chave é de cada usuário. Ela não deve ser adicionada ao GitHub. Na primeira abertura, o JARVIS pede a chave e a protege com Windows DPAPI no perfil daquele usuário. Também existe o atalho **Configurar API Gemini** no Menu Iniciar e o botão **API** dentro do aplicativo.
+## Quando o workflow rápido deve recusar
 
-## Repositório público
+`build/hot_runtime_baseline.json` contém hashes de arquivos que exigem build completo. Se qualquer um deles mudar, `tools/build_hot_update.py` para antes de publicar e informa quais arquivos exigem nova base. Isso é intencional.
 
-O auto-update sem token foi desenhado para repositório público. Um repositório privado exigiria autenticação no computador de cada usuário e não é recomendado para esta forma simples de distribuição.
+## Versões são imutáveis
+
+Nunca substitua o conteúdo de uma versão já publicada. Se algo precisar de correção, publique outro número (`1.1.2`, `1.1.3`...). O runtime também rejeita localmente o mesmo número de versão com conteúdo diferente.

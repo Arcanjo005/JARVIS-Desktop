@@ -1,4 +1,4 @@
-# JARVIS Desktop 1.0
+# JARVIS Desktop 1.1
 
 Esta é a linha de distribuição Windows do JARVIS. O usuário final instala **`JARVIS_Setup_X.Y.Z.exe`** e não precisa ter Python, pip ou Git.
 
@@ -14,9 +14,16 @@ O botão **API** no topo permite trocar a chave depois.
 
 ## Atualizações
 
-O Desktop consulta a **última GitHub Release** configurada no build. Quando encontra uma versão maior, mostra **ATUALIZAR X.Y.Z**. O instalador é baixado, o SHA-256 é validado e só então a atualização silenciosa é executada. Memória, preferências, perfis e arquivos locais desconhecidos pelo instalador não são apagados.
+A base **1.1.0** separa o programa em duas camadas:
 
-O repositório inclui `.github/workflows/build-release.yml`. Em **Actions > Build and Publish JARVIS Desktop**, informe uma versão `X.Y.Z`; o próprio GitHub compila em Windows, cria o instalador e publica a Release. Veja `GITHUB_RELEASES_SETUP.md`.
+- **runtime/base** — `JARVIS.exe`, Python embutido, bibliotecas nativas, modelos e bootstrap de segurança;
+- **código atualizável** — interface, conversa, voz, comandos, agente e integrações Python.
+
+Depois de instalar a base 1.1.0 uma vez, mudanças normais são publicadas pelo workflow **`Publish JARVIS Hot Update (fast)`**. Ele gera um `JARVIS_HotUpdate_X.Y.Z.zip` pequeno, sem PyInstaller. O próprio JARVIS consulta as Releases, valida SHA-256, instala o pacote em `%LOCALAPPDATA%\JARVIS\runtime`, reinicia e ativa a nova versão. Se dois boots consecutivos falharem, o bootstrap volta automaticamente para o runtime anterior.
+
+Use **`Build FULL JARVIS Installer (runtime/dependencies)`** somente quando mudar uma dependência, `main.py`, `hot_update_runtime.py`, o bootstrap, o ícone ou um modelo/asset protegido. Esse build completo executa testes no `JARVIS.exe` congelado antes de publicar o instalador, incluindo voz, bandeja e uma prova de que o Hot Runtime realmente sobrepõe o código embutido.
+
+O botão **ATUALIZAR X.Y.Z** escolhe automaticamente o melhor caminho: hot update compatível quando existir; instalador completo quando a nova versão exigir outro runtime. Veja `GITHUB_RELEASES_SETUP.md`.
 
 ## Código-fonte / build
 

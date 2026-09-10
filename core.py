@@ -101,7 +101,7 @@ class JarvisCore:
                 return
 
             # Compatibilidade com instalações antigas e ambiente de desenvolvimento.
-            current_dir = os.path.dirname(os.path.abspath(__file__))
+            current_dir = os.environ.get("JARVIS_APP_DIR") or os.path.dirname(os.path.abspath(__file__))
             env_path = os.path.join(current_dir, ".env")
             if os.path.exists(env_path):
                 load_dotenv(env_path, override=False)

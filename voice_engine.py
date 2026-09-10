@@ -255,21 +255,57 @@ class _AudioRingStream:
 
 
 class _StableDirectStream:
-    """Leitura direta do PortAudio, sem callback/fila/watchdog.
+    """Leitura direta do PortAudio, com normalização opcional para 16 kHz.
 
-    O Logitech do usuario mostrou um comportamento importante: a calibracao
-    por ``stream.read()`` continua entregando audio, enquanto o caminho callback
-    pode parar de chamar o Python e disparar reconexoes falsas. Este adaptador
-    usa exatamente a mesma leitura direta da calibracao no wake/captura.
+    O wake/STT do JARVIS trabalha em 16 kHz, mas vários drivers Windows só
+    expõem o microfone em 44,1/48 kHz. O adaptador lê na taxa nativa escolhida
+    por ``_detect_microphone`` e devolve sempre blocos mono int16 equivalentes
+    a ``VoiceEngine.SAMPLE_RATE``. Assim um headset válido não fica mudo só
+    porque o host API recusou abrir 16 kHz diretamente.
     """
 
-    def __init__(self, stream, owner):
+    def __init__(self, stream, owner, input_rate=None):
         self._stream = stream
         self._owner = owner
         self._driver_overflows = 0
+        self._target_rate = int(getattr(owner, "SAMPLE_RATE", 16000) or 16000)
+        try:
+            self._input_rate = int(round(float(input_rate or self._target_rate)))
+        except Exception:
+            self._input_rate = self._target_rate
+        if self._input_rate <= 0:
+            self._input_rate = self._target_rate
+
+    def _resample_to_target(self, raw: bytes, target_frames: int) -> bytes:
+        if self._input_rate == self._target_rate:
+            return raw
+        try:
+            np = self._owner._np
+            samples = np.frombuffer(raw, dtype=np.int16)
+            wanted = max(1, int(target_frames))
+            if samples.size == wanted:
+                return samples.tobytes()
+            if samples.size < 2:
+                return (np.zeros(wanted, dtype=np.int16)).tobytes()
+            # Interpolação por bloco é suficiente para wake/STT e mantém a
+            # dependência enxuta (não exige scipy/librosa no runtime).
+            x_old = np.linspace(0.0, 1.0, num=samples.size, endpoint=False, dtype=np.float64)
+            x_new = np.linspace(0.0, 1.0, num=wanted, endpoint=False, dtype=np.float64)
+            converted = np.interp(x_new, x_old, samples.astype(np.float64))
+            converted = np.clip(converted, -32768, 32767).astype(np.int16)
+            return converted.tobytes()
+        except Exception as exc:
+            try:
+                self._owner.last_error = f"Falha ao normalizar taxa do microfone: {exc}"
+            except Exception:
+                pass
+            raise
 
     def read(self, frames: int):
-        data, overflowed = self._stream.read(int(frames))
+        target_frames = max(1, int(frames))
+        source_frames = max(1, int(round(target_frames * self._input_rate / self._target_rate)))
+        data, overflowed = self._stream.read(source_frames)
+        raw = self._resample_to_target(bytes(data), target_frames)
         now = time.monotonic()
         try:
             self._owner._last_direct_frame_at = now
@@ -282,7 +318,7 @@ class _StableDirectStream:
             pass
         if overflowed:
             self._driver_overflows += 1
-        return data, overflowed
+        return raw, overflowed
 
     def read_latest(self, frames: int, max_backlog_chunks: int = 18):
         # Em leitura direta nao existe backlog de callback: cada read pega o
@@ -526,7 +562,7 @@ class VoiceEngine:
         on_live_transcript: Optional[Callable[[str], None]] = None,
     ):
         self.project_dir = Path(
-            project_dir or Path(__file__).resolve().parent
+            project_dir or os.environ.get("JARVIS_APP_DIR") or Path(__file__).resolve().parent
         )
         self.data_dir = self.project_dir / "data"
         self.models_dir = self.data_dir / "voice_models"
@@ -572,6 +608,14 @@ class VoiceEngine:
 
         self._wake_thread = None
         self._wake_thread_lock = threading.Lock()
+        # Desktop 1.1: a thread de wake agora e supervisionada. No executavel
+        # empacotado o driver de audio pode levar alguns segundos para ficar
+        # disponivel apos login/instalacao; uma falha de boot nao deve matar a
+        # voz ate o proximo restart do JARVIS.
+        self._ready_event = threading.Event()
+        self._startup_attempts = 0
+        self._supervisor_restarts = 0
+        self._background_voice_services_started = False
         self._tts_thread = None
         self._tts_queue = queue.Queue()
 
@@ -645,6 +689,7 @@ class VoiceEngine:
         self._last_tts_end_at = 0.0
         self._current_tts_text = ""
         self._input_device_index = None
+        self._capture_sample_rate = self.SAMPLE_RATE
         self._audio_ring = None
         self._capture_mode = "stable-direct-16k"
         self._last_direct_frame_at = 0.0
@@ -1011,7 +1056,10 @@ class VoiceEngine:
             "caption_word_sync": self.CAPTION_WORD_SYNC,
             "transcript_mode": "full-utterance+semantic-fastlane",
             "capture_mode": self._capture_mode,
+            "capture_sample_rate": int(getattr(self, "_capture_sample_rate", self.SAMPLE_RATE) or self.SAMPLE_RATE),
             "wake_thread_alive": bool(self._wake_thread and self._wake_thread.is_alive()),
+            "startup_attempts": int(self._startup_attempts),
+            "supervisor_restarts": int(self._supervisor_restarts),
             "direct_frames_read": int(self._direct_frames_read),
             "last_audio_frame_age_ms": (
                 int(round(max(0.0, time.monotonic() - self._last_direct_frame_at) * 1000.0))
@@ -1021,17 +1069,64 @@ class VoiceEngine:
         }
 
     def _spawn_wake_thread_classic(self) -> bool:
-        """Inicia uma unica thread de wake; sem supervisor ou auto-heal."""
+        """Inicia uma unica thread supervisionada de wake/audio."""
         with self._wake_thread_lock:
             if self._wake_thread is not None and self._wake_thread.is_alive():
                 return True
             self._wake_thread = threading.Thread(
-                target=self._bootstrap_and_listen,
+                target=self._voice_supervisor_loop,
                 name="JARVIS-WAKE",
                 daemon=True,
             )
             self._wake_thread.start()
             return True
+
+    def _start_background_voice_services_once(self):
+        if self._background_voice_services_started:
+            return
+        self._background_voice_services_started = True
+        threading.Thread(
+            target=self._maintain_tts_cache,
+            name="JARVIS-TTS-CACHE-MAINT",
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=self._prewarm_ack,
+            name="JARVIS-TTS-PREWARM",
+            daemon=True,
+        ).start()
+
+    def _voice_supervisor_loop(self):
+        """Mantem o wake word vivo sem criar loops agressivos de reconexao."""
+        delay = 0.75
+        while not self._stop_event.is_set():
+            self._startup_attempts += 1
+            self._ready_event.clear()
+            self._ready = False
+            self._bootstrap_and_listen()
+            if self._stop_event.is_set():
+                return
+
+            self._ready = False
+            self._ready_event.clear()
+            self._supervisor_restarts += 1
+            detail = str(self.last_error or "Entrada de audio indisponivel").strip()
+            self._state("RECONECTANDO", detail[:180])
+            self._log(
+                "warning",
+                f"Motor de voz sera reaberto em {delay:.2f}s (tentativa {self._startup_attempts}).",
+            )
+            if self._stop_event.wait(delay):
+                return
+            delay = min(5.0, delay * 1.65)
+
+    def wait_until_ready(self, timeout: float = 0.0) -> bool:
+        if self._ready:
+            return True
+        try:
+            return bool(self._ready_event.wait(max(0.0, float(timeout))))
+        except Exception:
+            return bool(self._ready)
 
     def start(self):
         if self._started:
@@ -1058,6 +1153,8 @@ class VoiceEngine:
 
     def stop(self):
         self._stop_event.set()
+        self._ready = False
+        self._ready_event.clear()
         self._manual_trigger.set()
         self._followup_trigger.set()
         try:
@@ -1187,17 +1284,23 @@ class VoiceEngine:
             self._detect_microphone()
 
             if not self._mic_available:
+                self._ready = False
+                self._ready_event.clear()
+                if not self.last_error:
+                    self.last_error = "Nenhum dispositivo de entrada disponível"
                 self._state(
                     "SEM_MICROFONE",
-                    "Nenhum dispositivo de entrada disponível"
+                    self.last_error
                 )
                 return
 
             self._ensure_vosk_model()
-            self._load_vosk_model()
+            if self._vosk_model is None:
+                self._load_vosk_model()
             self._auto_calibrate_microphone(duration=1.05)
 
             self._ready = True
+            self._ready_event.set()
             self._state(
                 "AGUARDANDO",
                 f"Diga '{PUBLIC_NAME.title()}'"
@@ -1216,22 +1319,13 @@ class VoiceEngine:
                 if self.STT_ENGINE in ("auto", "deepgram", "flux") and not self._deepgram_configured:
                     self._log("info", "Deepgram nao configurado; usando STT local. Execute CONFIGURAR_DEEPGRAM.bat.")
 
-            threading.Thread(
-                target=self._maintain_tts_cache,
-                name="JARVIS-TTS-CACHE-MAINT",
-                daemon=True,
-            ).start()
-            threading.Thread(
-                target=self._prewarm_ack,
-                name="JARVIS-TTS-PREWARM",
-                daemon=True,
-            ).start()
-
+            self._start_background_voice_services_once()
             self._wake_loop()
 
         except Exception as exc:
             self.last_error = str(exc)
             self._ready = False
+            self._ready_event.clear()
             self._log("error", f"Falha no sistema de voz: {exc}")
             self._state("ERRO", str(exc))
 
@@ -1282,33 +1376,112 @@ class VoiceEngine:
             pass
 
     def _detect_microphone(self):
+        """Seleciona uma entrada utilizável e uma taxa de captura compatível.
+
+        Primeiro tentamos 16 kHz nativos. Se o driver/host API do Windows
+        recusar, testamos a taxa padrão real do dispositivo e 48/44,1 kHz.
+        O stream é reamostrado para 16 kHz por ``_StableDirectStream`` antes
+        de chegar ao Vosk/WebRTC VAD.
+        """
+        self._mic_available = False
+        self._input_device_index = None
+        self._capture_sample_rate = self.SAMPLE_RATE
         try:
-            device = self._sd.query_devices(kind="input")
-            channels = int(device.get("max_input_channels", 0))
-
-            if channels < 1:
-                raise VoiceEngineError(
-                    "O dispositivo de entrada não possui canal de microfone."
-                )
-
-            self.input_device_name = str(device.get("name", ""))
-            self._load_mic_profile()
-
-            try:
-                default_input = int(
-                    self._sd.default.device[0]
-                )
-                if default_input >= 0:
-                    self._input_device_index = default_input
-            except Exception:
-                self._input_device_index = None
-
-            self._mic_available = True
-
+            devices = list(self._sd.query_devices())
         except Exception as exc:
-            self._mic_available = False
-            self.last_error = str(exc)
-            self._log("warning", f"Microfone indisponível: {exc}")
+            self.last_error = f"PortAudio não conseguiu listar entradas: {exc}"
+            self._log("warning", self.last_error)
+            return
+
+        candidates = []
+        try:
+            default_input = int(self._sd.default.device[0])
+        except Exception:
+            default_input = -1
+
+        if 0 <= default_input < len(devices):
+            candidates.append(default_input)
+
+        others = []
+        for index, device in enumerate(devices):
+            try:
+                channels = int(device.get("max_input_channels", 0))
+            except Exception:
+                channels = 0
+            if channels < 1 or index in candidates:
+                continue
+            name = str(device.get("name", "") or "").lower()
+            preference = 0
+            if any(key in name for key in ("microphone", "microfone", "mic ", "headset", "usb")):
+                preference -= 10
+            others.append((preference, index))
+        candidates.extend(index for _, index in sorted(others))
+
+        if not candidates:
+            self.last_error = "Nenhum dispositivo de entrada de áudio foi encontrado."
+            self._log("warning", self.last_error)
+            return
+
+        first_error = ""
+        tried = []
+        for index in candidates:
+            device = devices[index]
+            rates = [self.SAMPLE_RATE]
+            try:
+                native = int(round(float(device.get("default_samplerate") or 0)))
+            except Exception:
+                native = 0
+            for rate in (native, 48000, 44100):
+                if rate > 0 and rate not in rates:
+                    rates.append(rate)
+
+            for rate in rates:
+                try:
+                    self._sd.check_input_settings(
+                        device=index,
+                        channels=self.CHANNELS,
+                        dtype="int16",
+                        samplerate=rate,
+                    )
+                except Exception as exc:
+                    tried.append(f"#{index}@{rate}: {exc}")
+                    if not first_error:
+                        first_error = str(exc)
+                    continue
+
+                self._input_device_index = int(index)
+                self._capture_sample_rate = int(rate)
+                self.input_device_name = str(device.get("name", "") or f"Entrada {index}")
+                self._load_mic_profile()
+                self._mic_available = True
+                self.last_error = ""
+                if rate != self.SAMPLE_RATE:
+                    self._capture_mode = f"stable-direct-{rate}-to-{self.SAMPLE_RATE}"
+                    self._log(
+                        "warning",
+                        f"Microfone '{self.input_device_name}' não abriu em {self.SAMPLE_RATE} Hz; "
+                        f"capturando em {rate} Hz com reamostragem interna.",
+                    )
+                else:
+                    self._capture_mode = "stable-direct-16k"
+                if index != default_input:
+                    self._log(
+                        "warning",
+                        f"Microfone padrão indisponível; usando entrada compatível: "
+                        f"{self.input_device_name} (#{index}, {rate} Hz).",
+                    )
+                else:
+                    self._log("info", f"Microfone selecionado: {self.input_device_name} (#{index}, {rate} Hz).")
+                return
+
+        detail = first_error or "formato de captura recusado pelo driver"
+        if len(tried) > 4:
+            detail += f"; {len(tried)} combinações foram testadas"
+        self.last_error = (
+            "Há dispositivo de entrada, mas nenhuma taxa de captura compatível pôde ser aberta: "
+            + detail
+        )
+        self._log("warning", self.last_error)
 
     def _mic_profile_file(self) -> Path:
         return self.data_dir / "mic_profiles.json"
@@ -1383,13 +1556,16 @@ class VoiceEngine:
         frames = 320
         deadline = time.monotonic() + max(0.65, float(duration))
         try:
+            capture_rate = int(getattr(self, "_capture_sample_rate", self.SAMPLE_RATE) or self.SAMPLE_RATE)
+            source_frames = max(1, int(round(frames * capture_rate / self.SAMPLE_RATE)))
             with self._sd.RawInputStream(
-                samplerate=self.SAMPLE_RATE,
-                blocksize=frames,
+                samplerate=capture_rate,
+                blocksize=source_frames,
                 dtype="int16",
                 channels=self.CHANNELS,
                 device=self._input_device_index,
-            ) as stream:
+            ) as raw_stream:
+                stream = _StableDirectStream(raw_stream, self, input_rate=capture_rate)
                 while time.monotonic() < deadline and not self._stop_event.is_set():
                     data, overflowed = stream.read(frames)
                     raw = bytes(data)
@@ -2064,16 +2240,22 @@ class VoiceEngine:
             got_frame = False
 
             try:
+                capture_rate = int(getattr(self, "_capture_sample_rate", self.SAMPLE_RATE) or self.SAMPLE_RATE)
+                source_block_frames = max(1, int(round(block_frames * capture_rate / self.SAMPLE_RATE)))
                 with self._sd.RawInputStream(
-                    samplerate=self.SAMPLE_RATE,
-                    blocksize=block_frames,
+                    samplerate=capture_rate,
+                    blocksize=source_block_frames,
                     dtype="int16",
                     channels=self.CHANNELS,
                     device=self._input_device_index,
                 ) as raw_stream:
-                    stream = _StableDirectStream(raw_stream, self)
+                    stream = _StableDirectStream(raw_stream, self, input_rate=capture_rate)
                     self._audio_ring = stream
-                    self._capture_mode = "stable-direct-16k"
+                    self._capture_mode = (
+                        "stable-direct-16k"
+                        if capture_rate == self.SAMPLE_RATE
+                        else f"stable-direct-{capture_rate}-to-{self.SAMPLE_RATE}"
+                    )
                     self.last_error = ""
                     self._state("AGUARDANDO", f"Diga '{PUBLIC_NAME.title()}'")
                     # O primeiro read acontece dentro de _listen_on_stream e,
@@ -2099,11 +2281,12 @@ class VoiceEngine:
                 self._log("warning", f"Falha real de leitura do microfone: {exc}")
                 if self._direct_open_failures >= 3:
                     self._ready = False
+                    self._ready_event.clear()
                     self._state("ERRO", "Microfone parou de entregar áudio")
                     self._log(
                         "error",
-                        "Entrada de áudio interrompida após 3 falhas reais. "
-                        "Use 'reiniciar voz' depois de verificar o headset.",
+                        "Entrada de áudio interrompida após 3 falhas reais; "
+                        "o supervisor tentará reabrir automaticamente.",
                     )
                     return
                 # Sem estado RECONECTANDO: uma falha real recebe no máximo duas
@@ -3968,7 +4151,7 @@ class VoiceEngine:
         cache_at = float(getattr(self, "_voice_terms_cache_at", 0.0) or 0.0)
         if not cache or now - cache_at > 45.0:
             try:
-                project_dir = getattr(self, "project_dir", Path(__file__).resolve().parent)
+                project_dir = getattr(self, "project_dir", Path(os.environ.get("JARVIS_APP_DIR") or Path(__file__).resolve().parent))
                 cache = list(load_voice_terms(str(project_dir), limit=220))
             except Exception:
                 cache = []

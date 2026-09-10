@@ -19,7 +19,7 @@ def check(condition, detail=""):
         raise AssertionError(detail or f"check {checks} failed")
 
 
-check(BUILD.endswith("beta.16") or "desktop." in BUILD, BUILD)
+check(BUILD.endswith("beta.16") or "desktop." in BUILD or "hotbase." in BUILD or "hot." in BUILD, BUILD)
 
 # Composer conversacional: multilinha, Enter local e nenhum Return global.
 check("self.text_input = ctk.CTkTextbox(" in GUI)

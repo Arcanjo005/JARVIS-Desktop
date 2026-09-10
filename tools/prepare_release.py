@@ -63,6 +63,10 @@ def main():
     config = json.loads(config_path.read_text(encoding="utf-8"))
     config["repository"] = repository
     config["enabled"] = True
+    config["hot_updates_enabled"] = True
+    config["hot_update_asset_prefix"] = str(config.get("hot_update_asset_prefix") or "JARVIS_HotUpdate_")
+    config["runtime_api"] = 1
+    config["bootstrap_version"] = version
     config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     write_version_resource(version)

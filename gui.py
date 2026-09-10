@@ -425,7 +425,7 @@ class JarvisGUI:
 
         # Runtime enxuto: cria apenas as pastas ativas e instala o crash log.
         # Backups automáticos de código foram removidos da distribuição.
-        self.project_dir = str(ensure_runtime_dirs(os.path.dirname(os.path.abspath(__file__))))
+        self.project_dir = str(ensure_runtime_dirs(os.environ.get("JARVIS_APP_DIR") or os.path.dirname(os.path.abspath(__file__))))
         install_exception_hooks(self.project_dir)
 
         self.web_search = WebSearch(logger)
@@ -808,7 +808,7 @@ class JarvisGUI:
 
         try:
             self.voice_engine = VoiceEngine(
-                project_dir=os.path.dirname(os.path.abspath(__file__)),
+                project_dir=self.project_dir,
                 logger=self.logger,
                 on_state=self._on_voice_engine_state,
                 on_wake=self._on_voice_wake,
@@ -836,12 +836,21 @@ class JarvisGUI:
             except Exception:
                 pass
             self.voice_engine.start()
+            # O engine inicia de forma assíncrona. `start()` apenas cria as
+            # threads; microfone, PortAudio e Vosk ainda podem falhar alguns
+            # instantes depois. Mantemos o recurso habilitado para permitir
+            # auto-recuperação, mas só anunciamos VOZ PRONTA quando a captura
+            # realmente abriu.
             self.voice_enabled = True
             self.logger.info(
-                "Motor de voz avançado iniciado em background.",
+                "Motor de voz iniciado; aguardando microfone/wake ficarem prontos.",
                 "VOICE"
             )
-            self._post_ui_event("runtime_ready", "voice")
+            threading.Thread(
+                target=self._monitor_voice_runtime,
+                name="JARVIS-VOICE-SUPERVISION",
+                daemon=True,
+            ).start()
         except Exception as e:
             self.voice_enabled = False
             self.voice_engine = None
@@ -850,6 +859,56 @@ class JarvisGUI:
                 "Erro ao inicializar motor de voz",
                 "VOICE"
             )
+
+    def _monitor_voice_runtime(self):
+        """Confirma boot real da voz e acompanha recuperação do microfone.
+
+        Nunca toca widgets Tk diretamente. O VoiceEngine possui seu próprio
+        supervisor e pode recuperar um microfone que apareceu após o boot.
+        Esta rotina apenas publica telemetria/estado quando a escuta realmente
+        fica operacional.
+        """
+        engine = self.voice_engine
+        if engine is None:
+            return
+
+        announced_ready = False
+        last_signature = None
+        while self.voice_engine is engine:
+            try:
+                if engine.wait_until_ready(1.0):
+                    if not announced_ready:
+                        announced_ready = True
+                        status = engine.status()
+                        mic = str(status.get("input_device") or status.get("input_device_name") or "microfone padrão")
+                        self.logger.info(f"Voz pronta para wake word no dispositivo: {mic}", "VOICE")
+                        self._post_ui_event("runtime_ready", "voice")
+                    # Continua monitorando: se o stream cair, o supervisor do
+                    # engine tentará reabrir e o estado visual será atualizado.
+                    continue
+
+                status = engine.status()
+                signature = (
+                    str(status.get("state") or ""),
+                    str(status.get("last_error") or "")[:180],
+                    int(status.get("startup_attempts") or 0),
+                )
+                if signature != last_signature:
+                    last_signature = signature
+                    detail = signature[1] or "Aguardando dispositivo de entrada"
+                    self.logger.warning(
+                        f"Voz ainda não pronta (tentativa {signature[2]}): {detail}",
+                        "VOICE",
+                    )
+            except Exception as exc:
+                self.logger.warning(f"Monitor do motor de voz: {exc}", "VOICE")
+
+            try:
+                if getattr(engine, "_stop_event", None) is not None and engine._stop_event.wait(0.8):
+                    return
+            except Exception:
+                import time
+                time.sleep(0.8)
 
     def _setup_qt_voice_overlay(self):
         """Overlay Qt real-alpha; importado depois do primeiro frame."""
@@ -1013,6 +1072,14 @@ class JarvisGUI:
         }
 
         display = labels.get(state, state or "VOZ")
+
+        # Estado único também para o botão/atalhos de captura manual. O
+        # VoiceEngine é a fonte de verdade; a GUI não mantém mais um segundo
+        # reconhecedor/stream legado em paralelo.
+        if state in ("OUVINDO", "ESCUTANDO", "ESPERANDO_RESPOSTA", "ACORDOU"):
+            self.is_listening = True
+        elif state in ("AGUARDANDO", "PREPARANDO", "RECONECTANDO", "SEM_MICROFONE", "ERRO"):
+            self.is_listening = False
 
         # PREPARANDO é apenas inicialização do motor. Visualmente nasce em
         # AGUARDANDO (mini); quando o engine sinaliza AGUARDANDO, entra em
@@ -1413,7 +1480,7 @@ class JarvisGUI:
         return clean
 
     def _user_profile_path(self) -> Path:
-        return Path(__file__).resolve().parent / "data" / "user_profile.json"
+        return Path(self.project_dir) / "data" / "user_profile.json"
 
     def _load_persistent_user_name(self) -> str:
         """Carrega somente o nome preferido; independe da conversa/chat ativo."""
@@ -2656,16 +2723,17 @@ class JarvisGUI:
 
         try:
             self.desktop_integration = DesktopIntegration(
-                project_dir=os.path.dirname(
-                    os.path.abspath(__file__)
-                ),
+                project_dir=self.project_dir,
                 logger=self.logger,
                 on_toggle_orb=self._desktop_toggle_orb,
                 on_show_chat=self._desktop_show_chat,
                 on_listen_now=self._desktop_listen_now,
                 on_move_orb=self._desktop_move_orb,
                 on_exit=self._desktop_exit,
-                auto_enable_startup=True,
+                # O instalador já oferece a opção "Iniciar com Windows" e o
+                # menu da bandeja permite alterá-la depois. Não sobrescreva a
+                # escolha do usuário na primeira execução.
+                auto_enable_startup=False,
             )
             self.desktop_integration.start()
             self._post_ui_event("runtime_ready", "desktop")
@@ -2861,10 +2929,14 @@ class JarvisGUI:
         notes = " ".join(str(getattr(info, "notes", "") or "").split())
         if len(notes) > 420:
             notes = notes[:417].rstrip() + "..."
-        detail = f"Nova versão {info.version} disponível."
+        update_kind = "atualização rápida" if getattr(info, "is_hot", False) else "atualização completa"
+        detail = f"Nova versão {info.version} disponível ({update_kind})."
         if notes:
             detail += f"\n\n{notes}"
-        detail += "\n\nBaixar e instalar agora? O JARVIS será reiniciado."
+        if getattr(info, "is_hot", False):
+            detail += "\n\nBaixar e aplicar agora? Não será necessário reinstalar o JARVIS. Ele apenas reiniciará."
+        else:
+            detail += "\n\nBaixar e instalar agora? O JARVIS será reiniciado."
         if not messagebox.askyesno("Atualização do JARVIS", detail):
             return
         self._update_download_active = True
@@ -2875,11 +2947,15 @@ class JarvisGUI:
 
         def worker():
             try:
-                installer = self.update_manager.download(
+                package = self.update_manager.download(
                     info,
                     progress=lambda done, total: self._post_ui_call(self._set_update_progress, done, total),
                 )
-                self.update_manager.launch_installer(installer, update=True)
+                if getattr(info, "is_hot", False):
+                    self.update_manager.apply_hot_update(package, info)
+                    self.update_manager.launch_hot_restart()
+                else:
+                    self.update_manager.launch_installer(package, update=True)
                 self._post_ui_call(self._begin_update_shutdown)
             except Exception as exc:
                 self._post_ui_call(self._update_failed, str(exc))
@@ -2888,7 +2964,8 @@ class JarvisGUI:
 
     def _begin_update_shutdown(self):
         try:
-            self.update_button.configure(text="INSTALANDO...", state="disabled")
+            hot = bool(self._pending_update_info and getattr(self._pending_update_info, "is_hot", False))
+            self.update_button.configure(text="APLICANDO..." if hot else "INSTALANDO...", state="disabled")
         except Exception:
             pass
         self._update_status("ATUALIZANDO", "#5F91FF")
@@ -11819,60 +11896,50 @@ class JarvisGUI:
             )
 
     def _toggle_listening(self):
-        """Alterna modo de escuta de voz"""
-        if not self.voice_enabled:
-            self.add_message("Sistema", "❌ Sistema de voz não disponível", is_system=True)
+        """Captura manual usando o mesmo VoiceEngine do wake word.
+
+        O caminho legado SpeechRecognition dependia de `self.microphone` e
+        `self.recognizer`, que não existem no runtime moderno. Um único motor
+        agora é dono do dispositivo de áudio, evitando disputa e botões mortos.
+        """
+        if not self.voice_engine:
+            self.add_message("Sistema", "❌ Motor de voz ainda não está disponível.", is_system=True)
             return
-        
         if self.is_listening:
             self._stop_listening()
-        else:
-            self._start_listening()
-    
+            return
+        self._start_listening()
+
     def _start_listening(self):
-        """Inicia modo de escuta"""
+        """Solicita um turno manual sem abrir um segundo stream de microfone."""
+        engine = self.voice_engine
+        if engine is None:
+            self.add_message("Sistema", "❌ Motor de voz ainda não está disponível.", is_system=True)
+            return
         self.is_listening = True
-        self.voice_button.configure(
-            text="🔴",
-            fg_color=Config.get_color("secondary")
-        )
-        
-        def listen():
-            try:
-                import speech_recognition as sr
-                with self.microphone as source:
-                    self.recognizer.adjust_for_ambient_noise(source)
-                    audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=5)
-                
-                try:
-                    text = self.recognizer.recognize_google(audio, language='pt-BR')
-                    self._process_voice_command(text)
-                except sr.UnknownValueError:
-                    self.add_message("Sistema", "🎤 Não entendi. Tente novamente.", is_system=True)
-                except sr.RequestError as e:
-                    self.logger.error(e, "Erro na API de reconhecimento", "GUI")
-                    self.add_message("Sistema", "❌ Erro no reconhecimento de voz", is_system=True)
-                    
-            except sr.WaitTimeoutError:
-                self.add_message("Sistema", "🎤 Tempo esgotado. Tente novamente.", is_system=True)
-            except Exception as e:
-                self.logger.error(e, "Erro na escuta de voz", "GUI")
-                self.add_message("Sistema", f"❌ Erro: {e}", is_system=True)
-            finally:
-                self._stop_listening()
-        
-        # Executa em thread separada
-        thread = threading.Thread(target=listen, daemon=True)
-        thread.start()
-    
+        try:
+            if self.voice_button:
+                self.voice_button.configure(fg_color="#215FA8", hover_color="#2E73C7")
+        except Exception:
+            pass
+        try:
+            engine.trigger_manual()
+            self._set_voice_overlay_text("Estou ouvindo...")
+            self.logger.info("Escuta manual enviada ao VoiceEngine.", "VOICE")
+        except Exception as exc:
+            self.is_listening = False
+            self.logger.error(exc, "Falha ao ativar escuta manual", "VOICE")
+            self.add_message("Sistema", "❌ Não consegui ativar o microfone agora.", is_system=True)
+
     def _stop_listening(self):
-        """Para modo de escuta"""
+        """Atualiza apenas o estado visual; o VoiceEngine controla o stream."""
         self.is_listening = False
-        self.voice_button.configure(
-            text="🎤",
-            fg_color="#182536"
-        )
-    
+        try:
+            if self.voice_button and not self.voice_visual_mode:
+                self.voice_button.configure(fg_color="#393C45", hover_color="#4B5060")
+        except Exception:
+            pass
+
     def _process_voice_command(self, text: str):
         """Processa comando de voz"""
         self.add_message("Voz", text, is_user=True)
@@ -12070,10 +12137,11 @@ Comandos locais do JARVIS disponíveis:
                 desktop_status = (
                     self.desktop_integration.status()
                 )
-                can_hide = bool(
-                    desktop_status.get("tray_ready")
-                    or desktop_status.get("hotkey_ready")
-                )
+                # Nunca esconda uma janela sem existir um caminho visual para
+                # recuperá-la/encerrá-la. Hotkey não substitui ícone de bandeja:
+                # se o tray falhou, X fecha de verdade em vez de criar um
+                # processo invisível que só o Gerenciador de Tarefas consegue matar.
+                can_hide = bool(desktop_status.get("tray_ready"))
         except Exception:
             can_hide = False
 

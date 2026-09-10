@@ -86,6 +86,10 @@ class DesktopIntegration:
 
         self._hotkey_thread = None
         self._hotkey_thread_id = None
+        self._tray_thread = None
+        self._tray_started_event = threading.Event()
+        self._tray_restarts = 0
+        self._tray_last_error = ""
         self._stop_event = threading.Event()
 
     # --------------------------------------------------------
@@ -158,10 +162,21 @@ class DesktopIntegration:
 
         self.tray_icon = None
         self.tray_ready = False
+        self._tray_started_event.clear()
+        try:
+            thread = self._tray_thread
+            if thread and thread.is_alive() and thread is not threading.current_thread():
+                thread.join(timeout=1.5)
+        except Exception:
+            pass
+        self._tray_thread = None
 
     def status(self) -> dict:
         return {
             "tray_ready": self.tray_ready,
+            "tray_thread_alive": bool(self._tray_thread and self._tray_thread.is_alive()),
+            "tray_restarts": int(self._tray_restarts),
+            "tray_last_error": str(self._tray_last_error or ""),
             "hotkey_ready": self.hotkey_ready,
             "hotkey": self.hotkey_name,
             "startup_enabled": self.is_startup_enabled(),
@@ -407,79 +422,123 @@ class DesktopIntegration:
 
         return image
 
+    def _tray_setup(self, icon):
+        """Marca a bandeja pronta somente depois do backend Win32 estar vivo."""
+        try:
+            icon.visible = True
+            self.tray_ready = True
+            self._tray_last_error = ""
+            self._tray_started_event.set()
+            self._log("info", "Ícone da bandeja Win32 iniciado e visível.")
+        except Exception as exc:
+            self.tray_ready = False
+            self._tray_last_error = str(exc)
+            self._tray_started_event.set()
+            self._log("error", f"Falha ao tornar o ícone da bandeja visível: {exc}")
+
+    def _build_tray_icon(self):
+        if pystray is None:
+            raise RuntimeError("pystray não está disponível no runtime")
+        image = self._create_tray_image()
+        if image is None:
+            raise RuntimeError("Pillow não conseguiu criar a imagem da bandeja")
+        menu = pystray.Menu(
+            pystray.MenuItem(
+                "Abrir JARVIS",
+                lambda icon, item: self._safe_call(self.on_show_chat),
+                default=True,
+            ),
+            pystray.MenuItem(
+                "Mostrar / ocultar esfera",
+                lambda icon, item: self._safe_call(self.on_toggle_orb),
+            ),
+            pystray.MenuItem(
+                "Ouvir agora",
+                lambda icon, item: self._safe_call(self.on_listen_now),
+            ),
+            pystray.MenuItem(
+                "Mover esfera",
+                lambda icon, item: self._safe_call(self.on_move_orb),
+            ),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                "Iniciar com Windows",
+                lambda icon, item: self.toggle_startup(),
+                checked=lambda item: self.is_startup_enabled(),
+            ),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                "Sair do JARVIS",
+                lambda icon, item: self._safe_call(self.on_exit),
+            ),
+        )
+        return pystray.Icon(
+            "JARVIS",
+            image,
+            "JARVIS - Assistente",
+            menu,
+        )
+
+    def _tray_supervisor_loop(self):
+        """Mantém o tray vivo e recupera falhas transitórias do Explorer/backend."""
+        delay = 0.8
+        while not self._stop_event.is_set():
+            try:
+                self._tray_started_event.clear()
+                self.tray_icon = self._build_tray_icon()
+                self.tray_icon.run(setup=self._tray_setup)
+                if self._stop_event.is_set():
+                    return
+                raise RuntimeError("loop da bandeja encerrou inesperadamente")
+            except Exception as exc:
+                self.tray_ready = False
+                self._tray_last_error = str(exc)
+                self._tray_restarts += 1
+                self._tray_started_event.set()
+                self._log(
+                    "warning",
+                    f"Bandeja será reiniciada em {delay:.1f}s: {exc}",
+                )
+                if self._stop_event.wait(delay):
+                    return
+                delay = min(5.0, delay * 1.7)
+            finally:
+                self.tray_ready = False
+                self.tray_icon = None
+
     def _start_tray(self):
         if pystray is None:
+            self.tray_ready = False
+            self._tray_last_error = "pystray não está no runtime"
+            self._tray_started_event.set()
             self._log(
-                "warning",
-                "pystray não instalado; bandeja desativada."
+                "error",
+                "pystray não está no runtime; bandeja indisponível. "
+                "O JARVIS continuará fechando normalmente pelo X."
             )
             return
 
-        try:
-            image = self._create_tray_image()
+        if self._tray_thread and self._tray_thread.is_alive():
+            return
 
-            menu = pystray.Menu(
-                pystray.MenuItem(
-                    "Abrir JARVIS",
-                    lambda icon, item: self._safe_call(
-                        self.on_show_chat
-                    ),
-                    default=True,
-                ),
-                pystray.MenuItem(
-                    "Mostrar / ocultar esfera",
-                    lambda icon, item: self._safe_call(
-                        self.on_toggle_orb
-                    ),
-                ),
-                pystray.MenuItem(
-                    "Ouvir agora",
-                    lambda icon, item: self._safe_call(
-                        self.on_listen_now
-                    ),
-                ),
-                pystray.MenuItem(
-                    "Mover esfera",
-                    lambda icon, item: self._safe_call(
-                        self.on_move_orb
-                    ),
-                ),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem(
-                    "Iniciar com Windows",
-                    lambda icon, item: self.toggle_startup(),
-                    checked=lambda item: self.is_startup_enabled(),
-                ),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem(
-                    "Sair do JARVIS",
-                    lambda icon, item: self._safe_call(
-                        self.on_exit
-                    ),
-                ),
-            )
+        self._tray_restarts = 0
+        self._tray_last_error = ""
+        self._tray_started_event.clear()
+        self._tray_thread = threading.Thread(
+            target=self._tray_supervisor_loop,
+            name="JARVIS-TRAY",
+            daemon=True,
+        )
+        self._tray_thread.start()
 
-            self.tray_icon = pystray.Icon(
-                "JARVIS",
-                image,
-                "JARVIS - Assistente",
-                menu,
-            )
-
-            # run_detached integra o tray sem bloquear o mainloop do Tk.
-            self.tray_icon.run_detached()
-            self.tray_ready = True
-
+        # O setup do pystray é chamado quando o backend realmente está pronto.
+        # Não marque tray_ready por antecipação.
+        if not self._tray_started_event.wait(4.0):
+            self._log("warning", "Bandeja ainda não confirmou inicialização após 4 s.")
+        elif not self.tray_ready:
             self._log(
-                "info",
-                "Ícone da bandeja iniciado."
-            )
-
-        except Exception as exc:
-            self.tray_ready = False
-            self._log(
-                "error",
-                f"Falha ao iniciar bandeja: {exc}"
+                "warning",
+                "Bandeja não ficou visível na primeira tentativa; o supervisor continuará tentando.",
             )
 
     def _safe_call(self, callback):

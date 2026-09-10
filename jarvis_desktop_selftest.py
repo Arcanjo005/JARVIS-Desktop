@@ -21,7 +21,7 @@ root = Path(__file__).resolve().parent
 from jarvis_version import VERSION, BUILD, CHANNEL
 from packaging.version import Version
 check(str(Version(VERSION)) == VERSION, f"VERSION não é semver: {VERSION}")
-check("desktop." in BUILD, BUILD)
+check("desktop." in BUILD or "hotbase." in BUILD or "hot." in BUILD, BUILD)
 check(CHANNEL == "stable", CHANNEL)
 
 # DPAPI abstraction / migration. On non-Windows the module intentionally uses a dev-only fallback.
@@ -67,6 +67,10 @@ with tempfile.TemporaryDirectory() as td:
         "enabled": True,
         "repository": "owner/JARVIS-Desktop",
         "installer_asset_prefix": "JARVIS_Setup_",
+        "hot_updates_enabled": True,
+        "hot_update_asset_prefix": "JARVIS_HotUpdate_",
+        "runtime_api": 1,
+        "bootstrap_version": "1.1.0",
     }), encoding="utf-8")
     up = GitHubReleaseUpdater(app, current_version="1.0.0")
     check(up.is_configured(), "repo público válido não reconhecido")
@@ -84,7 +88,21 @@ iss = (root / "build" / "JARVIS.iss").read_text(encoding="utf-8")
 workflow = (root / ".github" / "workflows" / "build-release.yml").read_text(encoding="utf-8")
 overlay_src = (root / "voice_overlay_qt.py").read_text(encoding="utf-8")
 first_run_src = (root / "first_run_setup.py").read_text(encoding="utf-8")
+requirements_src = (root / "requirements.txt").read_text(encoding="utf-8")
+desktop_src = (root / "desktop_integration.py").read_text(encoding="utf-8")
+voice_src = (root / "voice_engine.py").read_text(encoding="utf-8")
+build_src = (root / "build" / "build_windows.ps1").read_text(encoding="utf-8")
+build_requirements_src = (root / "build" / "requirements-build.txt").read_text(encoding="utf-8")
+updater_src = (root / "github_updater.py").read_text(encoding="utf-8")
+hot_workflow_src = (root / ".github" / "workflows" / "publish-hot-update.yml").read_text(encoding="utf-8")
+hot_runtime_src = (root / "hot_update_runtime.py").read_text(encoding="utf-8")
+baseline = json.loads((root / "build" / "hot_runtime_baseline.json").read_text(encoding="utf-8"))
 
+check("activate_hot_runtime" in main_src, "main sem hot runtime")
+check("--restart-after-pid" in main_src, "main sem reinicio hot seguro")
+check("apply_hot_update" in gui_src and "launch_hot_restart" in gui_src, "GUI sem hot update")
+check((root / ".github" / "workflows" / "publish-hot-update.yml").is_file(), "workflow hot update ausente")
+check((root / "build" / "hot_runtime_baseline.json").is_file(), "baseline hot ausente")
 check("migrate_legacy_env(base)" in main_src, "main não migra .env legado")
 check(main_src.index("_bootstrap_configuration(base)") < main_src.index("from core import JarvisCore"), "core importa antes do bootstrap seguro")
 check("bootstrap_secrets_to_env" in core_src and "reload_api_key" in core_src, "core sem cofre/reload")
@@ -111,6 +129,36 @@ check('child_command = [sys.executable, "--voice-overlay-child"]' in overlay_src
 check('str(Path(__file__).resolve()), "--child"' in overlay_src, "overlay de desenvolvimento perdeu modo python")
 check('Parameters: "--configure-api"' in iss and 'waituntilterminated skipifsilent' in iss, "instalador nao abre configuracao Gemini antes do app")
 check(first_run_src.count('window.attributes("-topmost", True)') >= 1, "dialogo Gemini pode ficar escondido atras do instalador")
+
+# Desktop/voice reliability guards introduced by the 1.1.0 stable baseline.
+check("pystray" in requirements_src, "runtime do instalador não inclui pystray")
+check("pystray._win32" in build_src and '"--hidden-import", "pystray._win32"' in build_src, "PyInstaller não força backend Win32 do tray")
+check("--runtime-selftest" in main_src, "main sem smoke test do executável congelado")
+check("PYSTRAY_BACKEND" in main_src and "win32" in main_src, "main não fixa backend Win32 do tray")
+check("runtime-selftest.json" in build_src and "Start-Process -FilePath $ExePath" in build_src, "build não executa smoke test no JARVIS.exe final")
+check('"--collect-all", "sounddevice"' in build_src and '"--collect-all", "vosk"' in build_src, "build não empacota voz nativa explicitamente")
+check("_voice_supervisor_loop" in voice_src and "wait_until_ready" in voice_src, "VoiceEngine sem supervisor de recuperação")
+check("check_input_settings" in voice_src and "Microfone padrão indisponível; usando entrada compatível" in voice_src, "detecção de microfone não possui fallback real")
+check("_monitor_voice_runtime" in gui_src, "GUI não confirma que o wake realmente ficou pronto")
+check("engine.trigger_manual()" in gui_src, "botão/escuta manual ainda usa reconhecedor legado")
+check('can_hide = bool(desktop_status.get("tray_ready"))' in gui_src, "X ainda pode esconder JARVIS sem tray")
+check('or desktop_status.get("hotkey_ready")' not in gui_src, "hotkey ainda permite processo invisível sem tray")
+check("_tray_started_event" in desktop_src and "icon.run(setup=self._tray_setup)" in desktop_src, "tray não aguarda backend Win32 real")
+check("_tray_supervisor_loop" in desktop_src and "_tray_restarts" in desktop_src and "_tray_last_error" in desktop_src, "tray sem supervisor/retry observável")
+check("run_detached()" not in desktop_src, "tray ainda usa run_detached depois do Tk mainloop")
+check("auto_enable_startup=False" in gui_src, "GUI ainda força inicialização automática do Windows")
+check("send2trash" in requirements_src, "runtime do instalador não inclui send2trash")
+check("pyinstaller==6.22.2" in build_requirements_src and "pyinstaller-hooks-contrib==2026.7" in build_requirements_src, "toolchain PyInstaller não está travada na base hot validada")
+check("_capture_sample_rate" in voice_src and "_resample_to_target" in voice_src and "default_samplerate" in voice_src, "voz não possui fallback 44.1/48 kHz com reamostragem para 16 kHz")
+check("PYINSTALLER_RESET_ENVIRONMENT" in updater_src, "reinício hot do EXE não reseta ambiente do bootloader")
+check("SetDllDirectoryW(None)" in updater_src, "instalador externo herda diretório de DLL do PyInstaller")
+check("sys.stdout is None" in main_src and "sys.stderr is None" in main_src, "main congelado não protege stdout/stderr ausentes")
+check("JARVIS_EXPECT_HOT_VERSION" in main_src, "runtime-selftest não prova precedência do código hot")
+check("hot-runtime-smoke" in build_src and "JARVIS_EXPECT_HOT_VERSION" in build_src, "build completo não prova Hot Runtime no EXE final")
+check("jarvis_hot_update_selftest.py" in hot_workflow_src and "jarvis_desktop_selftest.py" in hot_workflow_src, "workflow rápido publica sem regressão do runtime")
+check('"requests>=2.31,<3"' in hot_workflow_src, "workflow rápido não instala requests exigido pelo selftest/updater")
+check("build/requirements-build.txt" in (baseline.get("locked_files") or {}), "baseline hot não protege toolchain do build completo")
+check("conteúdo diferente" in hot_runtime_src and "novo número de versão" in hot_runtime_src, "runtime hot permite reutilizar versão com conteúdo diferente")
 
 # The clean source package must not contain a real .env.
 check(not (root / ".env").exists(), "pacote Desktop contém .env")
