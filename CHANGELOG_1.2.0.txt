@@ -1,0 +1,22 @@
+JARVIS 1.2.0 - CHAT CORE
+========================
+
+Objetivo desta versao:
+Transformar a interface principal em um assistente de chat moderno antes de
+avancar para o Research Engine e, depois, para voz/agente mais sofisticados.
+
+Design:
+- Chat-first.
+- Navegacao lateral.
+- Sem dashboard de hardware permanente.
+- Menos elementos tecnicos.
+- Acoes descobertas por + e exemplos.
+- Historico de chats continua integrado ao banco local.
+- Blue Core aparece como identidade/acento, nao como painel de controle.
+
+Arquitetura:
+- gui.py da v1.1.2 permanece intacto.
+- A camada jarvis_release_120_bootstrap.py aplica os metodos visuais depois que
+  a classe JarvisGUI e importada.
+- Falha na camada de release e fail-open: jarvis_version.py nao deve impedir o
+  startup por causa de uma melhoria visual.
