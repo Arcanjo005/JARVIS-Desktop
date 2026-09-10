@@ -82,6 +82,8 @@ web_src = (root / "web_search.py").read_text(encoding="utf-8")
 gui_src = (root / "gui.py").read_text(encoding="utf-8")
 iss = (root / "build" / "JARVIS.iss").read_text(encoding="utf-8")
 workflow = (root / ".github" / "workflows" / "build-release.yml").read_text(encoding="utf-8")
+overlay_src = (root / "voice_overlay_qt.py").read_text(encoding="utf-8")
+first_run_src = (root / "first_run_setup.py").read_text(encoding="utf-8")
 
 check("migrate_legacy_env(base)" in main_src, "main não migra .env legado")
 check(main_src.index("_bootstrap_configuration(base)") < main_src.index("from core import JarvisCore"), "core importa antes do bootstrap seguro")
@@ -100,6 +102,15 @@ check("windows-latest" in workflow, "workflow não usa Windows")
 check("actions/checkout@v7" in workflow and "actions/setup-python@v7" in workflow, "actions desatualizadas")
 check("gh release" in workflow, "workflow não publica release")
 check("JARVIS_Setup_${{ inputs.version }}.exe" in workflow, "asset do setup ausente")
+
+# Runtime distribution guards: packaged helper processes may never relaunch
+# the full JARVIS UI recursively.
+check("--voice-overlay-child" in main_src, "main sem dispatch do overlay empacotado")
+check("_acquire_main_instance" in main_src and "CreateMutexW" in main_src, "main sem trava de instancia unica")
+check('child_command = [sys.executable, "--voice-overlay-child"]' in overlay_src, "overlay frozen relanca JARVIS incorretamente")
+check('str(Path(__file__).resolve()), "--child"' in overlay_src, "overlay de desenvolvimento perdeu modo python")
+check('Parameters: "--configure-api"' in iss and 'waituntilterminated skipifsilent' in iss, "instalador nao abre configuracao Gemini antes do app")
+check(first_run_src.count('window.attributes("-topmost", True)') >= 1, "dialogo Gemini pode ficar escondido atras do instalador")
 
 # The clean source package must not contain a real .env.
 check(not (root / ".env").exists(), "pacote Desktop contém .env")

@@ -1,0 +1,26 @@
+JARVIS Desktop 1.0.1 - Runtime Hotfix
+
+Substitua estes arquivos no repositorio GitHub mantendo exatamente as pastas:
+
+main.py
+voice_overlay_qt.py
+first_run_setup.py
+jarvis_desktop_selftest.py
+RELEASE_NOTES.md
+build/JARVIS.iss
+build/build_windows.ps1
+.github/workflows/build-release.yml
+
+Depois rode:
+Actions -> Build and Publish JARVIS Desktop -> Run workflow
+Version: 1.0.1
+
+Nao use 1.0.0 porque essa release ja existe.
+
+Correcoes principais:
+- impede cascata de varias janelas JARVIS no .exe;
+- overlay Qt usa modo filho explicito;
+- trava de instancia unica;
+- instalacao manual mostra configuracao Gemini antes da primeira abertura;
+- dialogo Gemini vem para frente;
+- atualiza upload-artifact para v7.

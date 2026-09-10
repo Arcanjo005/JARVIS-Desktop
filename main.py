@@ -6,10 +6,17 @@ an installed JARVIS does not depend on Python, Git or a plaintext API key file.
 """
 from __future__ import annotations
 
+import ctypes
 import os
 import sys
 from datetime import datetime
 from pathlib import Path
+
+_MAIN_MUTEX_HANDLE = None
+_MAIN_MUTEX_NAME = r"Local\JARVISDesktop.MainInstance"
+_OVERLAY_CHILD_SWITCH = "--voice-overlay-child"
+_CONFIGURE_API_SWITCH = "--configure-api"
+_ENSURE_API_SWITCH = "--ensure-api"
 
 
 def _app_dir() -> Path:
@@ -39,9 +46,62 @@ def _write_critical_error(message: object) -> None:
         pass
 
 
-def _bootstrap_configuration(base: Path) -> None:
+def _prepare_process_environment(base: Path) -> None:
     os.chdir(base)
-    sys.path.insert(0, str(base))
+    base_text = str(base)
+    if base_text not in sys.path:
+        sys.path.insert(0, base_text)
+
+
+def _run_overlay_child(base: Path) -> None:
+    """Run the Qt overlay inside the bundled executable without opening the GUI."""
+    _prepare_process_environment(base)
+    try:
+        from voice_overlay_qt import _run_child
+        _run_child()
+    except SystemExit:
+        raise
+    except Exception as exc:
+        _write_critical_error(f"Overlay Qt filho: {exc}")
+        raise SystemExit(2)
+
+
+def _acquire_main_instance() -> bool:
+    """Keep one main JARVIS window per Windows user/session.
+
+    Helper modes such as --configure-api and --voice-overlay-child bypass this
+    function and therefore remain available while the main UI is running.
+    """
+    global _MAIN_MUTEX_HANDLE
+    if os.name != "nt":
+        return True
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_mutex = kernel32.CreateMutexW
+        create_mutex.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+        create_mutex.restype = ctypes.c_void_p
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [ctypes.c_void_p]
+        close_handle.restype = ctypes.c_bool
+
+        ctypes.set_last_error(0)
+        handle = create_mutex(None, False, _MAIN_MUTEX_NAME)
+        if not handle:
+            # Never make JARVIS unusable because the defensive mutex itself failed.
+            return True
+        error = ctypes.get_last_error()
+        if error == 183:  # ERROR_ALREADY_EXISTS
+            close_handle(handle)
+            return False
+        _MAIN_MUTEX_HANDLE = handle
+        return True
+    except Exception as exc:
+        _write_critical_error(f"Trava de instancia unica indisponivel: {exc}")
+        return True
+
+
+def _bootstrap_configuration(base: Path) -> None:
+    _prepare_process_environment(base)
     from secure_settings import bootstrap_secrets_to_env, migrate_legacy_env
 
     # Existing Build 16 installations can carry GEMINI_API_KEY in .env. On the
@@ -52,21 +112,54 @@ def _bootstrap_configuration(base: Path) -> None:
         pass
     key = bootstrap_secrets_to_env()
 
-    configure_only = "--configure-api" in sys.argv
+    configure_only = _CONFIGURE_API_SWITCH in sys.argv
+    ensure_only = _ENSURE_API_SWITCH in sys.argv
     skip_first_run = "--no-first-run" in sys.argv
-    if configure_only or (not key and not skip_first_run):
+
+    if configure_only:
         try:
             from first_run_setup import show_api_key_dialog
-            show_api_key_dialog(first_run=not configure_only)
+            show_api_key_dialog(first_run=False)
         except Exception as exc:
             _write_critical_error(f"Falha ao abrir configuracao Gemini: {exc}")
         bootstrap_secrets_to_env()
-    if configure_only:
+        raise SystemExit(0)
+
+    if (not key) and (ensure_only or not skip_first_run):
+        try:
+            from first_run_setup import show_api_key_dialog
+            # Normal first launch may be skipped. The installer's explicit
+            # configuration mode uses --configure-api and has no skip button.
+            show_api_key_dialog(first_run=not ensure_only)
+        except Exception as exc:
+            _write_critical_error(f"Falha ao abrir configuracao Gemini: {exc}")
+        bootstrap_secrets_to_env()
+
+    if ensure_only:
         raise SystemExit(0)
 
 
 def main() -> None:
     base = _app_dir()
+
+    # PyInstaller subprocesses must be dispatched before the single-instance
+    # guard; otherwise a helper can accidentally become another JARVIS window.
+    if _OVERLAY_CHILD_SWITCH in sys.argv:
+        _run_overlay_child(base)
+        return
+
+    try:
+        import multiprocessing
+        multiprocessing.freeze_support()
+    except Exception:
+        pass
+
+    helper_mode = _CONFIGURE_API_SWITCH in sys.argv or _ENSURE_API_SWITCH in sys.argv
+    if not helper_mode and not _acquire_main_instance():
+        # A main window is already alive. Exit quietly instead of creating a
+        # second UI (or a cascade if a helper process is misrouted).
+        return
+
     try:
         _bootstrap_configuration(base)
     except SystemExit:

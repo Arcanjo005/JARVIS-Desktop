@@ -52,6 +52,15 @@ def show_api_key_dialog(parent=None, first_run: bool = False) -> bool:
         window.iconbitmap("jarvis.ico")
     except Exception:
         pass
+    # O dialogo pode ser aberto pelo instalador; trazemos a janela para frente
+    # para que ela nao fique escondida atras do Setup ou de outra janela.
+    try:
+        window.attributes("-topmost", True)
+        window.lift()
+        window.focus_force()
+        window.after(900, lambda: window.attributes("-topmost", False))
+    except Exception:
+        pass
 
     result = {"saved": False}
     test_results = queue.Queue()

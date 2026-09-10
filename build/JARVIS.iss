@@ -72,6 +72,9 @@ Name: "{autodesktop}\JARVIS Desktop"; Filename: "{app}\{#MyAppExeName}"; Working
 Name: "{userstartup}\JARVIS Desktop"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: startup
 
 [Run]
+; Em instalação manual, a configuração da chave aparece ANTES da primeira abertura.
+; Atualizações automáticas são silenciosas e preservam a chave existente.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--configure-api"; WorkingDir: "{app}"; Flags: waituntilterminated skipifsilent; Check: not IsUpdateMode
 Filename: "{app}\{#MyAppExeName}"; Description: "Abrir JARVIS Desktop"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent; Check: not IsUpdateMode
 Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Flags: nowait; Check: IsUpdateMode
 

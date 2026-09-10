@@ -121,8 +121,17 @@ class QtVoiceOverlayController:
                 pass
             self._stderr_handle = open(log_path, "a", encoding="utf-8")
 
+            if getattr(sys, "frozen", False):
+                # In a PyInstaller build sys.executable is JARVIS.exe. Passing
+                # this module path as if it were a Python script would relaunch
+                # the full JARVIS UI recursively. main.py owns this explicit
+                # helper switch and dispatches directly to _run_child().
+                child_command = [sys.executable, "--voice-overlay-child"]
+            else:
+                child_command = [sys.executable, str(Path(__file__).resolve()), "--child"]
+
             self.process = subprocess.Popen(
-                [sys.executable, str(Path(__file__).resolve()), "--child"],
+                child_command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=self._stderr_handle,
@@ -130,6 +139,7 @@ class QtVoiceOverlayController:
                 encoding="utf-8",
                 bufsize=1,
                 creationflags=flags,
+                cwd=str(self.project_dir),
             )
             self._log("info", "Overlay Qt V4 iniciado.")
             return True
@@ -909,5 +919,5 @@ def _run_child():
     sys.exit(app.exec())
 
 
-if __name__ == "__main__" and "--child" in sys.argv:
+if __name__ == "__main__" and ("--child" in sys.argv or "--voice-overlay-child" in sys.argv):
     _run_child()
