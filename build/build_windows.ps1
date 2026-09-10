@@ -181,14 +181,75 @@ foreach ($RuntimeDir in $RuntimeDirs) {
 }
 
 Write-Host "[JARVIS] Montando instalador Inno Setup"
-$IsccCandidates = @(
-    "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe",
-    "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-)
-$Iscc = $IsccCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-if (!$Iscc) {
-    throw "ISCC.exe nao encontrado. Instale Inno Setup 6."
+
+function Resolve-IsccPath {
+    # 1) PATH / shim do Chocolatey.
+    foreach ($CommandName in @("ISCC.exe", "iscc.exe", "ISCC", "iscc")) {
+        $Command = Get-Command $CommandName -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($Command -and $Command.Source -and (Test-Path -LiteralPath $Command.Source)) {
+            return [System.IO.Path]::GetFullPath($Command.Source)
+        }
+    }
+
+    # 2) Caminhos oficiais. A variavel ProgramFiles(x86) precisa ser lida
+    # explicitamente; "$env:ProgramFiles(x86)" nao funciona como esperado.
+    $ProgramFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+    $ProgramFiles64 = [Environment]::GetEnvironmentVariable("ProgramFiles")
+    $LocalAppData = [Environment]::GetEnvironmentVariable("LOCALAPPDATA")
+    $ChocolateyInstall = [Environment]::GetEnvironmentVariable("ChocolateyInstall")
+    if ([string]::IsNullOrWhiteSpace($ChocolateyInstall)) {
+        $ChocolateyInstall = "C:\ProgramData\chocolatey"
+    }
+
+    $Candidates = New-Object System.Collections.Generic.List[string]
+    foreach ($Base in @($ProgramFilesX86, $ProgramFiles64)) {
+        if (![string]::IsNullOrWhiteSpace($Base)) {
+            $Candidates.Add((Join-Path $Base "Inno Setup 6\ISCC.exe"))
+            $Candidates.Add((Join-Path $Base "Inno Setup 5\ISCC.exe"))
+        }
+    }
+    if (![string]::IsNullOrWhiteSpace($LocalAppData)) {
+        $Candidates.Add((Join-Path $LocalAppData "Programs\Inno Setup 6\ISCC.exe"))
+    }
+    if (![string]::IsNullOrWhiteSpace($ChocolateyInstall)) {
+        $Candidates.Add((Join-Path $ChocolateyInstall "bin\ISCC.exe"))
+        $Candidates.Add((Join-Path $ChocolateyInstall "lib\innosetup\tools\ISCC.exe"))
+    }
+
+    foreach ($Candidate in $Candidates) {
+        if ($Candidate -and (Test-Path -LiteralPath $Candidate)) {
+            return [System.IO.Path]::GetFullPath($Candidate)
+        }
+    }
+
+    # 3) Fallback para mudancas de layout do pacote Chocolatey. A busca fica
+    # limitada ao pacote innosetup para nao percorrer o disco inteiro.
+    if (![string]::IsNullOrWhiteSpace($ChocolateyInstall)) {
+        $ChocoLib = Join-Path $ChocolateyInstall "lib"
+        if (Test-Path -LiteralPath $ChocoLib) {
+            $PackageDirs = Get-ChildItem -LiteralPath $ChocoLib -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like "innosetup*" }
+            foreach ($PackageDir in $PackageDirs) {
+                $Found = Get-ChildItem -LiteralPath $PackageDir.FullName -Filter "ISCC.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($Found) {
+                    return [System.IO.Path]::GetFullPath($Found.FullName)
+                }
+            }
+        }
+    }
+
+    return $null
 }
+
+$Iscc = Resolve-IsccPath
+if (!$Iscc) {
+    Write-Host "[JARVIS] ProgramFiles: $([Environment]::GetEnvironmentVariable('ProgramFiles'))"
+    Write-Host "[JARVIS] ProgramFiles(x86): $([Environment]::GetEnvironmentVariable('ProgramFiles(x86)'))"
+    Write-Host "[JARVIS] ChocolateyInstall: $([Environment]::GetEnvironmentVariable('ChocolateyInstall'))"
+    throw "ISCC.exe nao encontrado apos procurar PATH, Program Files e Chocolatey."
+}
+
+Write-Host "[JARVIS] Inno Setup encontrado: $Iscc"
 
 New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
 & $Iscc "/DMyAppVersion=$Version" $IssFile
