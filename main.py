@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """JARVIS Desktop entry point.
 
-The desktop build bootstraps per-user secrets before importing the AI stack so
-an installed JARVIS does not depend on Python, Git or a plaintext API key file.
+Diagnostic build: preserves normal startup behavior but records detailed
+startup phases and full tracebacks when the frozen executable closes early.
 """
 from __future__ import annotations
 
 import ctypes
 import os
 import sys
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -20,11 +21,60 @@ _ENSURE_API_SWITCH = "--ensure-api"
 _RESTART_AFTER_PID_SWITCH = "--restart-after-pid"
 _RUNTIME_SELFTEST_SWITCH = "--runtime-selftest"
 
+_STARTUP_PHASE = "module-load"
+
 
 def _app_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
+
+
+def _diagnostic_log_path() -> Path:
+    try:
+        local = Path(os.environ.get("LOCALAPPDATA") or Path.home())
+        folder = local / "JARVIS" / "logs"
+    except Exception:
+        folder = _app_dir() / "logs"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / "STARTUP_CRASH.txt"
+
+
+def _write_startup_diagnostic(message: object, *, exc: BaseException | None = None) -> None:
+    """Best-effort crash logger for failures that happen before/inside the GUI loop."""
+    try:
+        path = _diagnostic_log_path()
+        with path.open("a", encoding="utf-8", errors="replace") as handle:
+            handle.write("\n" + "=" * 72 + "\n")
+            handle.write("JARVIS DESKTOP - STARTUP DIAGNOSTIC\n")
+            handle.write("=" * 72 + "\n")
+            handle.write(f"Data/Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            handle.write(f"Fase: {_STARTUP_PHASE}\n")
+            handle.write(f"PID: {os.getpid()}\n")
+            handle.write(f"Frozen: {bool(getattr(sys, 'frozen', False))}\n")
+            handle.write(f"Executavel: {sys.executable}\n")
+            handle.write(f"App dir: {_app_dir()}\n")
+            handle.write(f"CWD: {Path.cwd()}\n")
+            handle.write(f"argv: {sys.argv!r}\n")
+            handle.write(f"Mensagem: {message}\n")
+            if exc is not None:
+                handle.write(f"Tipo: {type(exc).__name__}\n")
+                handle.write("Traceback:\n")
+                handle.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+            handle.write("\n")
+    except Exception:
+        pass
+
+
+def _set_phase(name: str) -> None:
+    global _STARTUP_PHASE
+    _STARTUP_PHASE = str(name)
+    try:
+        path = _diagnostic_log_path()
+        with path.open("a", encoding="utf-8", errors="replace") as handle:
+            handle.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] PHASE: {_STARTUP_PHASE}\n")
+    except Exception:
+        pass
 
 
 def _pop_switch_value(name: str) -> str:
@@ -42,7 +92,6 @@ def _pop_switch_value(name: str) -> str:
 
 
 def _wait_for_restart_parent() -> None:
-    """Helper-process mode: wait for the old JARVIS PID before normal boot."""
     raw_pid = _pop_switch_value(_RESTART_AFTER_PID_SWITCH)
     if not raw_pid:
         return
@@ -82,24 +131,17 @@ def _wait_for_restart_parent() -> None:
 
 
 def _activate_runtime(base: Path, *, track_boot: bool):
-    """Load a validated AppData hot runtime before importing JARVIS modules."""
     os.environ["JARVIS_APP_DIR"] = str(base)
     try:
         from hot_update_runtime import activate_hot_runtime
         return activate_hot_runtime(base, track_boot=track_boot)
     except Exception as exc:
         _write_critical_error(f"Hot runtime ignorado: {exc}")
+        _write_startup_diagnostic("Falha ao ativar hot runtime; usando bundle.", exc=exc)
         return None
 
 
-
 def _run_runtime_selftest(base: Path) -> None:
-    """Frozen-build smoke test used by CI before publishing an installer.
-
-    This does not open the microphone or any GUI. It verifies that the modules
-    and native assets required by voice, tray and overlay survived PyInstaller.
-    The optional argument after --runtime-selftest is a JSON report path.
-    """
     report_path = _pop_switch_value(_RUNTIME_SELFTEST_SWITCH)
     if report_path:
         target = Path(report_path)
@@ -112,9 +154,6 @@ def _run_runtime_selftest(base: Path) -> None:
     failures = []
 
     def _report_value(value):
-        # Import probes return module objects. They prove that the import worked,
-        # but module objects are not JSON serializable. Keep structured/string
-        # diagnostics when they are JSON-safe; otherwise store a simple True.
         if value is None:
             return True
         try:
@@ -133,7 +172,6 @@ def _run_runtime_selftest(base: Path) -> None:
 
     _prepare_process_environment(base)
     os.environ["JARVIS_APP_DIR"] = str(base)
-
     probe("customtkinter", lambda: __import__("customtkinter"))
     probe("sounddevice", lambda: __import__("sounddevice"))
     probe("vosk", lambda: __import__("vosk"))
@@ -147,11 +185,6 @@ def _run_runtime_selftest(base: Path) -> None:
     probe("overlay", lambda: __import__("voice_overlay_qt"))
     probe("send2trash", lambda: __import__("send2trash"))
 
-    # CI pode preparar um hot runtime sintético e pedir que o EXE prove que
-    # módulos externos em %LOCALAPPDATA% realmente têm precedência sobre o
-    # PYZ embutido. Sem esta prova, um build poderia publicar um atualizador
-    # "rápido" que baixa arquivos corretamente, mas continua executando a
-    # cópia congelada antiga.
     expected_hot = str(os.environ.get("JARVIS_EXPECT_HOT_VERSION") or "").strip()
     if expected_hot:
         activation_box = {"value": None}
@@ -206,15 +239,18 @@ def _run_runtime_selftest(base: Path) -> None:
     }
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(__import__("json").dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        target.write_text(
+            __import__("json").dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     except Exception as exc:
         _write_critical_error(f"Runtime selftest não conseguiu gravar relatório: {exc}")
         raise SystemExit(4)
-
     if failures:
         _write_critical_error("Runtime selftest falhou: " + " | ".join(failures))
         raise SystemExit(3)
     raise SystemExit(0)
+
 
 def _write_critical_error(message: object) -> None:
     base = _app_dir()
@@ -242,10 +278,6 @@ def _prepare_process_environment(base: Path) -> None:
     base_text = str(base)
     if base_text not in sys.path:
         sys.path.insert(0, base_text)
-
-    # PyInstaller --windowed pode entregar stdout/stderr como None. Algumas
-    # bibliotecas de áudio/GUI ainda escrevem nesses objetos durante import;
-    # manter handles para os.devnull evita falhas que só aparecem no .exe.
     if getattr(sys, "frozen", False):
         try:
             if sys.stdout is None:
@@ -254,15 +286,11 @@ def _prepare_process_environment(base: Path) -> None:
                 sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")
         except Exception:
             pass
-
-    # O Desktop alvo é Windows. Fixar o backend evita que o pystray tente
-    # autodetectar backends não empacotados quando executado pelo PyInstaller.
     if os.name == "nt":
         os.environ.setdefault("PYSTRAY_BACKEND", "win32")
 
 
 def _run_overlay_child(base: Path) -> None:
-    """Run the Qt overlay inside the bundled executable without opening the GUI."""
     _prepare_process_environment(base)
     try:
         from voice_overlay_qt import _run_child
@@ -271,15 +299,11 @@ def _run_overlay_child(base: Path) -> None:
         raise
     except Exception as exc:
         _write_critical_error(f"Overlay Qt filho: {exc}")
+        _write_startup_diagnostic("Falha no processo filho do overlay.", exc=exc)
         raise SystemExit(2)
 
 
 def _acquire_main_instance() -> bool:
-    """Keep one main JARVIS window per Windows user/session.
-
-    Helper modes such as --configure-api and --voice-overlay-child bypass this
-    function and therefore remain available while the main UI is running.
-    """
     global _MAIN_MUTEX_HANDLE
     if os.name != "nt":
         return True
@@ -291,20 +315,20 @@ def _acquire_main_instance() -> bool:
         close_handle = kernel32.CloseHandle
         close_handle.argtypes = [ctypes.c_void_p]
         close_handle.restype = ctypes.c_bool
-
         ctypes.set_last_error(0)
         handle = create_mutex(None, False, _MAIN_MUTEX_NAME)
         if not handle:
-            # Never make JARVIS unusable because the defensive mutex itself failed.
             return True
         error = ctypes.get_last_error()
-        if error == 183:  # ERROR_ALREADY_EXISTS
+        if error == 183:
             close_handle(handle)
+            _write_startup_diagnostic("Outra instância do JARVIS já possui o mutex principal.")
             return False
         _MAIN_MUTEX_HANDLE = handle
         return True
     except Exception as exc:
         _write_critical_error(f"Trava de instancia unica indisponivel: {exc}")
+        _write_startup_diagnostic("Falha ao criar mutex; inicialização continuará.", exc=exc)
         return True
 
 
@@ -312,14 +336,12 @@ def _bootstrap_configuration(base: Path) -> None:
     _prepare_process_environment(base)
     from secure_settings import bootstrap_secrets_to_env, migrate_legacy_env
 
-    # Existing Build 16 installations can carry GEMINI_API_KEY in .env. On the
-    # first Desktop launch it is moved into Windows DPAPI storage.
     try:
         migrate_legacy_env(base)
     except Exception:
         pass
-    key = bootstrap_secrets_to_env()
 
+    key = bootstrap_secrets_to_env()
     configure_only = _CONFIGURE_API_SWITCH in sys.argv
     ensure_only = _ENSURE_API_SWITCH in sys.argv
     skip_first_run = "--no-first-run" in sys.argv
@@ -330,17 +352,17 @@ def _bootstrap_configuration(base: Path) -> None:
             show_api_key_dialog(first_run=False)
         except Exception as exc:
             _write_critical_error(f"Falha ao abrir configuracao Gemini: {exc}")
+            _write_startup_diagnostic("Falha no diálogo de configuração Gemini.", exc=exc)
         bootstrap_secrets_to_env()
         raise SystemExit(0)
 
     if (not key) and (ensure_only or not skip_first_run):
         try:
             from first_run_setup import show_api_key_dialog
-            # Normal first launch may be skipped. The installer's explicit
-            # configuration mode uses --configure-api and has no skip button.
             show_api_key_dialog(first_run=not ensure_only)
         except Exception as exc:
             _write_critical_error(f"Falha ao abrir configuracao Gemini: {exc}")
+            _write_startup_diagnostic("Falha no primeiro diálogo de configuração.", exc=exc)
         bootstrap_secrets_to_env()
 
     if ensure_only:
@@ -349,21 +371,22 @@ def _bootstrap_configuration(base: Path) -> None:
 
 def main() -> None:
     base = _app_dir()
+    _set_phase("prepare-environment")
     _prepare_process_environment(base)
     os.environ["JARVIS_APP_DIR"] = str(base)
 
     if _RUNTIME_SELFTEST_SWITCH in sys.argv:
+        _set_phase("runtime-selftest")
         _run_runtime_selftest(base)
         return
 
-    # Hot-update restart helper waits before the single-instance mutex so the
-    # old process has time to release it. The switch is removed afterwards.
+    _set_phase("wait-restart-parent")
     _wait_for_restart_parent()
 
-    # PyInstaller helper processes are dispatched without participating in the
-    # main-window boot-health counter. They still use the active hot runtime.
     if _OVERLAY_CHILD_SWITCH in sys.argv:
+        _set_phase("overlay-child-activate-runtime")
         _activate_runtime(base, track_boot=False)
+        _set_phase("overlay-child-run")
         _run_overlay_child(base)
         return
 
@@ -375,48 +398,97 @@ def main() -> None:
 
     helper_mode = _CONFIGURE_API_SWITCH in sys.argv or _ENSURE_API_SWITCH in sys.argv
     if helper_mode:
+        _set_phase("helper-activate-runtime")
         _activate_runtime(base, track_boot=False)
     else:
+        _set_phase("single-instance")
         if not _acquire_main_instance():
             return
+        _set_phase("activate-runtime")
         _activate_runtime(base, track_boot=True)
 
     try:
+        _set_phase("bootstrap-configuration")
         _bootstrap_configuration(base)
     except SystemExit:
         raise
     except Exception as exc:
         _write_critical_error(f"Bootstrap: {exc}")
+        _write_startup_diagnostic("Exceção durante bootstrap de configuração.", exc=exc)
 
     try:
+        _set_phase("import-customtkinter")
         import customtkinter as ctk
+        _set_phase("import-actions")
         from actions import SystemActions
+        _set_phase("import-core")
         from core import JarvisCore
+        _set_phase("import-gui")
         from gui import JarvisGUI
+        _set_phase("import-logger")
         from logger import JarvisLogger
     except Exception as exc:
         _write_critical_error(f"Importacao: {exc}")
+        _write_startup_diagnostic("Falha importando módulos principais.", exc=exc)
         if not getattr(sys, "frozen", False):
             print(f"Erro ao importar modulos: {exc}")
         raise SystemExit(1)
 
     try:
+        _set_phase("ctk-theme")
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
+
+        _set_phase("create-logger")
         logger = JarvisLogger()
+
+        _set_phase("create-actions")
         actions = SystemActions(logger)
+
+        _set_phase("create-core")
         core = JarvisCore(logger)
+
+        _set_phase("create-gui")
         app = JarvisGUI(logger, actions, core)
+
+        # Do NOT mark the hot runtime healthy before the GUI loop has actually
+        # proven it can start. Schedule the health mark for the first Tk event
+        # whenever the GUI exposes the underlying root/window.
+        _set_phase("schedule-runtime-healthy")
         try:
             from hot_update_runtime import mark_hot_runtime_healthy
-            mark_hot_runtime_healthy()
-        except Exception:
-            pass
+
+            scheduled = False
+            for candidate_name in ("root", "window", "app"):
+                candidate = getattr(app, candidate_name, None)
+                if candidate is not None and hasattr(candidate, "after"):
+                    candidate.after(1500, mark_hot_runtime_healthy)
+                    scheduled = True
+                    break
+            if not scheduled:
+                # Safer fallback: leave runtime unmarked rather than declaring
+                # it healthy before app.run() has started.
+                _write_startup_diagnostic(
+                    "GUI criada, mas não foi possível agendar mark_hot_runtime_healthy via after()."
+                )
+        except Exception as exc:
+            _write_startup_diagnostic("Não foi possível agendar confirmação do hot runtime.", exc=exc)
+
+        _set_phase("app-run")
         app.run()
+
+        _set_phase("app-run-returned")
+        _write_startup_diagnostic(
+            "app.run() retornou normalmente. Se o usuário não pediu para sair, "
+            "investigue encerramento da GUI/tray."
+        )
     except KeyboardInterrupt:
         raise SystemExit(0)
-    except Exception as exc:
-        _write_critical_error(f"Inicializacao: {exc}")
+    except SystemExit:
+        raise
+    except BaseException as exc:
+        _write_critical_error(f"Inicializacao: {type(exc).__name__}: {exc}")
+        _write_startup_diagnostic("Falha fatal durante inicialização/execução da GUI.", exc=exc)
         try:
             print(f"Erro fatal na inicializacao: {exc}")
         except Exception:
@@ -425,4 +497,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        _set_phase("__main__")
+        main()
+    except SystemExit:
+        raise
+    except BaseException as exc:
+        _write_startup_diagnostic("Exceção não tratada escapou de main().", exc=exc)
+        raise
