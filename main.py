@@ -111,10 +111,22 @@ def _run_runtime_selftest(base: Path) -> None:
     checks = {}
     failures = []
 
+    def _report_value(value):
+        # Import probes return module objects. They prove that the import worked,
+        # but module objects are not JSON serializable. Keep structured/string
+        # diagnostics when they are JSON-safe; otherwise store a simple True.
+        if value is None:
+            return True
+        try:
+            __import__("json").dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError, OverflowError):
+            return True
+        return value
+
     def probe(name, func):
         try:
             value = func()
-            checks[name] = True if value is None else value
+            checks[name] = _report_value(value)
         except Exception as exc:
             checks[name] = False
             failures.append(f"{name}: {type(exc).__name__}: {exc}")

@@ -5,7 +5,7 @@
   "description": "Arquivos imutaveis por hot update. Alterou qualquer um: gere build completo.",
   "locked_files": {
     "requirements.txt": "750a6a028d75965a36c5248a97a13cd277ff6002c4e4d0740a1bafea8fd5281b",
-    "main.py": "0cc2342d9fea805e97cb81270a71da6a15e95651e0e417fa6a1e3db5cdf8b497",
+    "main.py": "20c0133615f566fcde5e709634d073034a45c1080dbcf6d9be423193273e6782",
     "hot_update_runtime.py": "08ef3d992dde8687fbe9128cc0ba94d1ed0d6fa5d2862a53d245f4041c88ba8a",
     "update_config.json": "5f0d75691e73a4e1498e3c46f1f6b3b64d16ac1f8a58cbbb9d1d831565d974cf",
     "jarvis.ico": "2ef61da98da7b8ac90290c774abcf632b135003ea98e3fc85df3a812bdab7b4c",

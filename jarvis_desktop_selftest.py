@@ -154,6 +154,8 @@ check("PYINSTALLER_RESET_ENVIRONMENT" in updater_src, "reinício hot do EXE não
 check("SetDllDirectoryW(None)" in updater_src, "instalador externo herda diretório de DLL do PyInstaller")
 check("sys.stdout is None" in main_src and "sys.stderr is None" in main_src, "main congelado não protege stdout/stderr ausentes")
 check("JARVIS_EXPECT_HOT_VERSION" in main_src, "runtime-selftest não prova precedência do código hot")
+check("def _report_value(value):" in main_src, "runtime-selftest ainda grava objetos não serializáveis")
+check("checks[name] = _report_value(value)" in main_src, "runtime-selftest não normaliza resultado dos imports para JSON")
 check("hot-runtime-smoke" in build_src and "JARVIS_EXPECT_HOT_VERSION" in build_src, "build completo não prova Hot Runtime no EXE final")
 check("jarvis_hot_update_selftest.py" in hot_workflow_src and "jarvis_desktop_selftest.py" in hot_workflow_src, "workflow rápido publica sem regressão do runtime")
 check('"requests>=2.31,<3"' in hot_workflow_src, "workflow rápido não instala requests exigido pelo selftest/updater")
