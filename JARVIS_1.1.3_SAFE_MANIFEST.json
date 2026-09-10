@@ -1,0 +1,49 @@
+{
+    "version":  "1.1.3",
+    "build":  "2026.09.10-desktop.safe1",
+    "base":  "v1.1.2",
+    "source_improvements_commit":  "1707a91631805060e3c397c977a23434dc6936ce",
+    "generated_at":  "2026-09-10T15:49:32.7562347Z",
+    "files":  [
+                  {
+                      "path":  "actions.py",
+                      "size":  177095,
+                      "sha256":  "f2c8f10bde792ee538861aeab6a7e9988e4a5c29627750f46482bfa0863790eb"
+                  },
+                  {
+                      "path":  "core.py",
+                      "size":  54802,
+                      "sha256":  "64c7a3df419c2ab174bb7ee94a7e19c3443ae8446daa74f8c987e15a1308addd"
+                  },
+                  {
+                      "path":  "diagnostics_manager.py",
+                      "size":  26311,
+                      "sha256":  "5bee0a61ffb935d579c06ffe2e9e403044c914f7106620df1d847adc19e7a50a"
+                  },
+                  {
+                      "path":  "gui.py",
+                      "size":  511164,
+                      "sha256":  "53c56e3b7341dc9a32e35e860b8cef50df09051151c2346276d5a27794a75d31"
+                  },
+                  {
+                      "path":  "jarvis_desktop_selftest.py",
+                      "size":  12618,
+                      "sha256":  "07dd8207b7bf1a159ec834e8bde9cb8e8381bdf9c425a5718c357ebefc05b9f4"
+                  },
+                  {
+                      "path":  "jarvis_router.py",
+                      "size":  113965,
+                      "sha256":  "31959dd5d379bea7c0d25905a13b5d32670e496a6335a62d55bb159df0f1f8b3"
+                  },
+                  {
+                      "path":  "jarvis_version.py",
+                      "size":  407,
+                      "sha256":  "708799fbb21675e56ed3ee14f8383479caa59cf127e17557b7702c2091014f02"
+                  },
+                  {
+                      "path":  "voice_engine.py",
+                      "size":  279537,
+                      "sha256":  "9d6d5caa47076b5e8f21e2e54ad42c6a53ca93059eeac2c805fddece569abf0b"
+                  }
+              ]
+}

@@ -1106,9 +1106,14 @@ class VoiceEngine:
         ).start()
 
     def _voice_supervisor_loop(self):
-        """Mantém o wake vivo sem martelar um dispositivo ausente/incompatível."""
+        """Mantém a voz viva sem criar tempestade de logs/reconexões.
+
+        Falta de microfone e falhas de recurso (ex.: download/modelo Vosk)
+        usam backoff longo. Falhas transitórias de stream continuam com retry
+        rápido, preservando a recuperação automática normal.
+        """
         transient_delay = 0.75
-        no_mic_cycles = 0
+        resource_delay = 30.0
         while not self._stop_event.is_set():
             self._startup_attempts += 1
             self._ready_event.clear()
@@ -1120,36 +1125,44 @@ class VoiceEngine:
             self._ready = False
             self._ready_event.clear()
             self._supervisor_restarts += 1
-            detail = str(self.last_error or "Entrada de audio indisponivel").strip()
-            no_usable_mic = not bool(self._mic_available)
+            detail = str(self.last_error or "Entrada de áudio indisponível").strip()
+            detail_key = detail.lower()
 
-            if no_usable_mic:
-                no_mic_cycles += 1
+            resource_problem = (
+                not bool(self._mic_available)
+                or "vosk" in detail_key
+                or "wake word" in detail_key
+                or ".download" in detail_key
+                or "modelo" in detail_key
+                or "download" in detail_key
+            )
+
+            if resource_problem:
                 self._auto_recovery_suspended = True
-                wait_s = 30.0
-                self._state("SEM_MICROFONE", detail[:180])
-                # Uma linha a cada ciclo já é suficiente; antes eram várias a
-                # cada 5 s e o log escondia os outros erros do aplicativo.
+                wait_s = resource_delay
+                resource_delay = min(300.0, resource_delay * 2.0)
+                transient_delay = 0.75
+                state = "SEM_MICROFONE" if not bool(self._mic_available) else "AGUARDANDO_RECURSO"
+                self._state(state, detail[:180])
                 self._log(
                     "warning",
-                    f"Voz sem entrada utilizável; nova detecção em {int(wait_s)}s "
+                    f"Voz aguardando recurso; nova tentativa em {int(wait_s)}s "
                     f"(tentativa {self._startup_attempts}).",
                 )
             else:
-                no_mic_cycles = 0
                 self._auto_recovery_suspended = False
+                resource_delay = 30.0
                 wait_s = transient_delay
+                transient_delay = min(5.0, transient_delay * 1.65)
                 self._state("RECONECTANDO", detail[:180])
                 self._log(
                     "warning",
                     f"Motor de voz será reaberto em {wait_s:.2f}s "
                     f"(tentativa {self._startup_attempts}).",
                 )
-                transient_delay = min(5.0, transient_delay * 1.65)
 
             if self._stop_event.wait(wait_s):
                 return
-
     def wait_until_ready(self, timeout: float = 0.0) -> bool:
         if self._ready:
             return True
@@ -1673,42 +1686,120 @@ class VoiceEngine:
             return False
 
     def _ensure_vosk_model(self):
-        if self._wake_model_path.exists():
+        """Garante o modelo Vosk com download único, verificação e troca atômica.
+
+        Evita o arquivo global ``.download`` que podia desaparecer durante uma
+        recuperação concorrente e não considera uma pasta parcial como modelo
+        válido.
+        """
+        import shutil
+
+        target = self._wake_model_path
+        required = ("final.mdl", "Gr.fst", "HCLr.fst", "phones.txt", "mfcc.conf")
+
+        def model_ready(path):
+            try:
+                return path.is_dir() and all((path / name).is_file() for name in required)
+            except Exception:
+                return False
+
+        if model_ready(target):
             return
 
-        self._state("PREPARANDO", "Baixando modelo leve de wake word")
+        self.models_dir.mkdir(parents=True, exist_ok=True)
+        self._state("PREPARANDO", "Preparando modelo leve de wake word")
 
-        zip_path = self.models_dir / f"{self.VOSK_MODEL_NAME}.zip"
-        temp_path = zip_path.with_suffix(".download")
+        unique = (
+            f"{self.VOSK_MODEL_NAME}.{os.getpid()}."
+            f"{threading.get_ident()}.{int(time.time() * 1000)}"
+        )
+        temp_path = self.models_dir / f"{unique}.download"
+        zip_path = self.models_dir / f"{unique}.zip"
+        extract_dir = None
 
         try:
-            if temp_path.exists():
-                temp_path.unlink()
-
-            urllib.request.urlretrieve(
+            request = urllib.request.Request(
                 self.VOSK_MODEL_URL,
-                temp_path,
+                headers={"User-Agent": "JARVIS-Desktop/1.1.3"},
             )
+            with urllib.request.urlopen(request, timeout=60) as response:
+                with temp_path.open("wb") as output:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        output.write(chunk)
 
-            digest = hashlib.md5(
-                temp_path.read_bytes()
-            ).hexdigest().lower()
+            if not temp_path.is_file() or temp_path.stat().st_size < 1024:
+                raise VoiceEngineError("O download do modelo Vosk veio vazio/incompleto.")
 
-            if digest != self.VOSK_MODEL_MD5.lower():
-                raise VoiceEngineError(
-                    "O modelo de wake word falhou na verificação MD5."
-                )
+            digest = hashlib.md5()
+            with temp_path.open("rb") as source:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+
+            if digest.hexdigest().lower() != self.VOSK_MODEL_MD5.lower():
+                raise VoiceEngineError("O modelo de wake word falhou na verificação MD5.")
 
             temp_path.replace(zip_path)
+            extract_dir = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{self.VOSK_MODEL_NAME}-",
+                    dir=str(self.models_dir),
+                )
+            )
 
             with zipfile.ZipFile(zip_path, "r") as archive:
-                archive.extractall(self.models_dir)
+                bad_member = archive.testzip()
+                if bad_member:
+                    raise VoiceEngineError(
+                        f"O ZIP do modelo Vosk está corrompido: {bad_member}"
+                    )
+                archive.extractall(extract_dir)
 
-            if not self._wake_model_path.exists():
+            extracted = extract_dir / self.VOSK_MODEL_NAME
+            if not model_ready(extracted):
+                matches = [
+                    path for path in extract_dir.rglob(self.VOSK_MODEL_NAME)
+                    if model_ready(path)
+                ]
+                if matches:
+                    extracted = matches[0]
+
+            if not model_ready(extracted):
                 raise VoiceEngineError(
-                    "O modelo Vosk foi extraído, mas a pasta esperada não apareceu."
+                    "O modelo Vosk foi extraído, mas os arquivos obrigatórios não apareceram."
                 )
 
+            # Outra thread/processo pode ter terminado primeiro. Se o destino já
+            # está íntegro, basta usar o que venceu a corrida.
+            if model_ready(target):
+                return
+
+            if target.exists():
+                if target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)
+                else:
+                    target.unlink()
+
+            shutil.move(str(extracted), str(target))
+
+            if not model_ready(target):
+                raise VoiceEngineError(
+                    "O modelo Vosk não ficou íntegro após a instalação."
+                )
+
+            self._log("info", f"Modelo Vosk pronto em: {target}")
+
+        except Exception as exc:
+            if model_ready(target):
+                return
+            raise VoiceEngineError(
+                f"Não consegui preparar o modelo Vosk com segurança: {exc}"
+            ) from exc
         finally:
             for path in (temp_path, zip_path):
                 try:
@@ -1716,7 +1807,11 @@ class VoiceEngine:
                         path.unlink()
                 except Exception:
                     pass
-
+            try:
+                if extract_dir and extract_dir.exists():
+                    shutil.rmtree(extract_dir, ignore_errors=True)
+            except Exception:
+                pass
     def _load_vosk_model(self):
         self._vosk_model = self._vosk.Model(
             str(self._wake_model_path)

@@ -2,7 +2,7 @@
 from jarvis_identity import PUBLIC_NAME, WAKE_NAME, LEGACY_NAME
 
 VERSION = "1.1.3"
-BUILD = "2026.09.10-hot.localtest"
+BUILD = "2026.09.10-desktop.safe1"
 CHANNEL = "stable"
 INTERNAL_NAME = "JARVIS"
 

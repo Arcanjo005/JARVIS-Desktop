@@ -574,6 +574,7 @@ class JarvisGUI:
         self._conversation_search_button = None
         self._new_chat_button = None
         self._ui_icon_cache = {}
+        self._brand_icon_cache = {}
         self._tech_j_image = None
         self._brand_logo_image = None
         self._stream_render_job = None
@@ -2973,7 +2974,11 @@ class JarvisGUI:
     def _get_brand_icon(self, size: int = 38):
         """Carrega o capacete do jarvis.ico uma vez e cria variantes nítidas."""
         size = max(16, int(size))
-        cached = self._brand_icon_cache.get(size)
+        cache = getattr(self, "_brand_icon_cache", None)
+        if cache is None:
+            cache = {}
+            self._brand_icon_cache = cache
+        cached = cache.get(size)
         if cached is not None:
             return cached
         try:
@@ -2985,7 +2990,7 @@ class JarvisGUI:
                 # o CTk cuida do DPI. Mantemos RGBA para preservar transparência.
                 logo = source_logo.convert("RGBA").copy()
             image = ctk.CTkImage(light_image=logo, dark_image=logo, size=(size, size))
-            self._brand_icon_cache[size] = image
+            cache[size] = image
             return image
         except Exception as exc:
             try:
