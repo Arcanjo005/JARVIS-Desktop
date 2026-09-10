@@ -1,0 +1,82 @@
+name: Publish JARVIS Hot Update (fast)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Nova versão (ex.: 1.1.1)"
+        required: true
+        default: "1.1.1"
+      minimum_bootstrap:
+        description: "Versão mínima do JARVIS.exe com Hot Runtime"
+        required: true
+        default: "1.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  publish-hot-update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v7
+
+      - name: Preparar Python leve
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Validar código antes de publicar
+        shell: bash
+        run: |
+          python -m pip install --quiet "packaging>=24,<27" "requests>=2.31,<3"
+          python -m compileall -q .
+          python jarvis_hot_update_selftest.py
+          python jarvis_desktop_selftest.py
+          python jarvis_build16_selftest.py
+          python jarvis_v8_selftest.py
+
+      - name: Gerar hot update sem compilar EXE
+        shell: bash
+        run: |
+          python tools/build_hot_update.py \
+            --version "${{ inputs.version }}" \
+            --minimum-bootstrap "${{ inputs.minimum_bootstrap }}" \
+            --repository "${{ github.repository }}" \
+            --run-number "${{ github.run_number }}"
+
+      - name: Guardar pacote rápido como artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: JARVIS-HotUpdate-${{ inputs.version }}
+          path: |
+            release/JARVIS_HotUpdate_${{ inputs.version }}.zip
+            release/JARVIS_HotUpdate_${{ inputs.version }}.zip.sha256
+            release/JARVIS_HotUpdate_${{ inputs.version }}.json
+          if-no-files-found: error
+
+      - name: Publicar Release rápida
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ inputs.version }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "A release $tag já existe. Use um número novo." >&2
+            exit 1
+          fi
+
+          gh release create "$tag" \
+            --draft \
+            --target "${{ github.sha }}" \
+            --title "JARVIS Desktop ${{ inputs.version }}" \
+            --notes-file "RELEASE_NOTES.md"
+
+          gh release upload "$tag" \
+            "release/JARVIS_HotUpdate_${{ inputs.version }}.zip" \
+            "release/JARVIS_HotUpdate_${{ inputs.version }}.zip.sha256" \
+            "release/JARVIS_HotUpdate_${{ inputs.version }}.json"
+
+          gh release edit "$tag" --draft=false --latest
