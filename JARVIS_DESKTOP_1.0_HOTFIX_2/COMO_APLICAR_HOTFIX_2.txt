@@ -1,0 +1,20 @@
+JARVIS Desktop 1.0 - Hotfix de Compilacao 2
+
+Problema corrigido:
+PyInstaller hooks contrib tenta executar copy_metadata('webrtcvad'), mas o pacote instalado e webrtcvad-wheels.
+O build aborta com PackageNotFoundError: webrtcvad.
+
+Como aplicar:
+1. No GitHub, abra build/build_windows.ps1.
+2. Substitua TODO o conteudo pelo arquivo build/build_windows.ps1 deste ZIP.
+3. Commit changes.
+4. Rode Actions > Build and Publish JARVIS Desktop > Run workflow.
+5. Use novamente a versao 1.0.0, desde que nenhuma release v1.0.0 tenha sido publicada.
+
+O hotfix tambem:
+- valida webrtcvad, _webrtcvad e os metadados de webrtcvad-wheels antes do PyInstaller;
+- cria um hook local que sobrepoe o hook quebrado do PyInstaller;
+- inclui explicitamente _webrtcvad;
+- cria um hook google.genai que ignora google.genai.tests, eliminando o aviso de pytest ausente;
+- mantem a correcao de caminhos absolutos do Hotfix 1;
+- valida os arquivos empacotados antes de chamar o Inno Setup.
