@@ -16,14 +16,12 @@ def check(condition, message):
         raise AssertionError(message)
 
 root = Path(__file__).resolve().parent
-
 # Version identity must be updater-compatible semver.
 from jarvis_version import VERSION, BUILD, CHANNEL
 from packaging.version import Version
 check(str(Version(VERSION)) == VERSION, f"VERSION não é semver: {VERSION}")
 check("desktop." in BUILD or "hotbase." in BUILD or "hot." in BUILD, BUILD)
 check(CHANNEL == "stable", CHANNEL)
-
 # DPAPI abstraction / migration. On non-Windows the module intentionally uses a dev-only fallback.
 old_local = os.environ.get("LOCALAPPDATA")
 old_key = os.environ.get("GEMINI_API_KEY")
@@ -39,7 +37,6 @@ with tempfile.TemporaryDirectory() as td:
     os.environ.pop("GEMINI_API_KEY", None)
     check(secure_settings.bootstrap_secrets_to_env() == secret, "bootstrap falhou")
     check(os.environ.get("GEMINI_API_KEY") == secret, "env de processo não recebeu chave")
-
     legacy = Path(td) / "legacy"
     legacy.mkdir()
     (legacy / ".env").write_text("OPENWEATHER_API_KEY=keep\nGEMINI_API_KEY=" + secret + "\nJARVIS_TEST=1\n", encoding="utf-8")
@@ -49,7 +46,6 @@ with tempfile.TemporaryDirectory() as td:
     check("GEMINI_API_KEY=" not in migrated, "Gemini ficou no .env após migração")
     check("OPENWEATHER_API_KEY=keep" in migrated and "JARVIS_TEST=1" in migrated, "migração apagou outras configs")
     check(secure_settings.load_gemini_api_key() == secret, "migração não salvou chave segura")
-
 if old_local is None:
     os.environ.pop("LOCALAPPDATA", None)
 else:
@@ -58,7 +54,6 @@ if old_key is None:
     os.environ.pop("GEMINI_API_KEY", None)
 else:
     os.environ["GEMINI_API_KEY"] = old_key
-
 # Updater configuration/version logic.
 from github_updater import GitHubReleaseUpdater
 with tempfile.TemporaryDirectory() as td:
@@ -78,7 +73,6 @@ with tempfile.TemporaryDirectory() as td:
     check(not up._is_newer("v1.0.0"), "mesma versão marcada como nova")
     check(not up._is_newer("v0.9.9"), "downgrade marcado como update")
     check(up._digest_from_asset({"digest": "sha256:" + "a" * 64}) == "a" * 64, "digest GitHub não lido")
-
 # Source-level integration guards.
 main_src = (root / "main.py").read_text(encoding="utf-8")
 core_src = (root / "core.py").read_text(encoding="utf-8")
@@ -97,7 +91,6 @@ updater_src = (root / "github_updater.py").read_text(encoding="utf-8")
 hot_workflow_src = (root / ".github" / "workflows" / "publish-hot-update.yml").read_text(encoding="utf-8")
 hot_runtime_src = (root / "hot_update_runtime.py").read_text(encoding="utf-8")
 baseline = json.loads((root / "build" / "hot_runtime_baseline.json").read_text(encoding="utf-8"))
-
 check("activate_hot_runtime" in main_src, "main sem hot runtime")
 check("--restart-after-pid" in main_src, "main sem reinicio hot seguro")
 check("apply_hot_update" in gui_src and "launch_hot_restart" in gui_src, "GUI sem hot update")
@@ -120,7 +113,6 @@ check("windows-latest" in workflow, "workflow não usa Windows")
 check("actions/checkout@v7" in workflow and "actions/setup-python@v7" in workflow, "actions desatualizadas")
 check("gh release" in workflow, "workflow não publica release")
 check("JARVIS_Setup_${{ inputs.version }}.exe" in workflow, "asset do setup ausente")
-
 # Runtime distribution guards: packaged helper processes may never relaunch
 # the full JARVIS UI recursively.
 check("--voice-overlay-child" in main_src, "main sem dispatch do overlay empacotado")
@@ -129,7 +121,6 @@ check('child_command = [sys.executable, "--voice-overlay-child"]' in overlay_src
 check('str(Path(__file__).resolve()), "--child"' in overlay_src, "overlay de desenvolvimento perdeu modo python")
 check('Parameters: "--configure-api"' in iss and 'waituntilterminated skipifsilent' in iss, "instalador nao abre configuracao Gemini antes do app")
 check(first_run_src.count('window.attributes("-topmost", True)') >= 1, "dialogo Gemini pode ficar escondido atras do instalador")
-
 # Desktop/voice reliability guards introduced by the 1.1.0 stable baseline.
 check("pystray" in requirements_src, "runtime do instalador não inclui pystray")
 check("pystray._win32" in build_src and '"--hidden-import", "pystray._win32"' in build_src, "PyInstaller não força backend Win32 do tray")
@@ -144,7 +135,13 @@ check(
 )
 check('"--collect-all", "sounddevice"' in build_src and '"--collect-all", "vosk"' in build_src, "build não empacota voz nativa explicitamente")
 check("_voice_supervisor_loop" in voice_src and "wait_until_ready" in voice_src, "VoiceEngine sem supervisor de recuperação")
-check("check_input_settings" in voice_src and "Microfone padrão indisponível; usando entrada compatível" in voice_src, "detecção de microfone não possui fallback real")
+check(
+    "check_input_settings" in voice_src
+    and "RawInputStream" in voice_src
+    and "query_devices" in voice_src
+    and "default_samplerate" in voice_src,
+    "detecção de microfone não possui fallback real",
+)
 check("_monitor_voice_runtime" in gui_src, "GUI não confirma que o wake realmente ficou pronto")
 check("engine.trigger_manual()" in gui_src, "botão/escuta manual ainda usa reconhecedor legado")
 check('can_hide = bool(desktop_status.get("tray_ready"))' in gui_src, "X ainda pode esconder JARVIS sem tray")
@@ -174,7 +171,6 @@ check("jarvis_hot_update_selftest.py" in hot_workflow_src and "jarvis_desktop_se
 check('"requests>=2.31,<3"' in hot_workflow_src, "workflow rápido não instala requests exigido pelo selftest/updater")
 check("build/requirements-build.txt" in (baseline.get("locked_files") or {}), "baseline hot não protege toolchain do build completo")
 check("conteúdo diferente" in hot_runtime_src and "novo número de versão" in hot_runtime_src, "runtime hot permite reutilizar versão com conteúdo diferente")
-
 # The clean source package must not contain a real .env.
 check(not (root / ".env").exists(), "pacote Desktop contém .env")
 
