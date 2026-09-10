@@ -135,7 +135,13 @@ check("pystray" in requirements_src, "runtime do instalador não inclui pystray"
 check("pystray._win32" in build_src and '"--hidden-import", "pystray._win32"' in build_src, "PyInstaller não força backend Win32 do tray")
 check("--runtime-selftest" in main_src, "main sem smoke test do executável congelado")
 check("PYSTRAY_BACKEND" in main_src and "win32" in main_src, "main não fixa backend Win32 do tray")
-check("runtime-selftest.json" in build_src and "Start-Process -FilePath $ExePath" in build_src, "build não executa smoke test no JARVIS.exe final")
+check(
+    "runtime-selftest.json" in build_src
+    and "Start-Process" in build_src
+    and "-FilePath $ExePath" in build_src
+    and "--runtime-selftest" in build_src,
+    "build não executa smoke test no JARVIS.exe final",
+)
 check('"--collect-all", "sounddevice"' in build_src and '"--collect-all", "vosk"' in build_src, "build não empacota voz nativa explicitamente")
 check("_voice_supervisor_loop" in voice_src and "wait_until_ready" in voice_src, "VoiceEngine sem supervisor de recuperação")
 check("check_input_settings" in voice_src and "Microfone padrão indisponível; usando entrada compatível" in voice_src, "detecção de microfone não possui fallback real")
@@ -148,6 +154,13 @@ check("_tray_supervisor_loop" in desktop_src and "_tray_restarts" in desktop_src
 check("run_detached()" not in desktop_src, "tray ainda usa run_detached depois do Tk mainloop")
 check("auto_enable_startup=False" in gui_src, "GUI ainda força inicialização automática do Windows")
 check("send2trash" in requirements_src, "runtime do instalador não inclui send2trash")
+check(
+    '"--hidden-import", "send2trash"' in build_src
+    and '"--hidden-import", "send2trash.win"' in build_src
+    and '"--hidden-import", "send2trash.win.modern"' in build_src
+    and '"--hidden-import", "send2trash.win.legacy"' in build_src,
+    "PyInstaller não força Send2Trash no runtime congelado",
+)
 check("pyinstaller==6.22.2" in build_requirements_src and "pyinstaller-hooks-contrib==2026.7" in build_requirements_src, "toolchain PyInstaller não está travada na base hot validada")
 check("_capture_sample_rate" in voice_src and "_resample_to_target" in voice_src and "default_samplerate" in voice_src, "voz não possui fallback 44.1/48 kHz com reamostragem para 16 kHz")
 check("PYINSTALLER_RESET_ENVIRONMENT" in updater_src, "reinício hot do EXE não reseta ambiente do bootloader")
