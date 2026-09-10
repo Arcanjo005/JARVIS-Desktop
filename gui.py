@@ -555,6 +555,7 @@ class JarvisGUI:
         self._new_chat_button = None
         self._ui_icon_cache = {}
         self._tech_j_image = None
+        self._brand_logo_image = None
         self._stream_render_job = None
         self._stream_last_render_at = 0.0
         self.cpu_gauge = None
@@ -2904,10 +2905,62 @@ class JarvisGUI:
             return
         try:
             self.update_button.configure(text=f"ATUALIZAR {info.version}", state="normal")
-            if not self.update_button.winfo_ismapped():
-                self.update_button.pack(side="left", padx=(0, 7), pady=4, before=self.clock_label)
         except Exception:
             pass
+
+    def _manual_update_check(self):
+        """Botão Atualizar sempre visível: procura uma release nova sob demanda."""
+        if self._update_download_active:
+            return
+        if not self.update_manager or not self.update_manager.is_configured():
+            messagebox.showwarning(
+                "Atualização do JARVIS",
+                "O atualizador ainda não está configurado para um repositório de releases.",
+            )
+            return
+        self._update_download_active = True
+        try:
+            self.update_button.configure(text="VERIFICANDO...", state="disabled")
+        except Exception:
+            pass
+
+        def worker():
+            try:
+                info = self.update_manager.check()
+                self._post_ui_call(self._finish_manual_update_check, info, "")
+            except Exception as exc:
+                self._post_ui_call(self._finish_manual_update_check, None, str(exc))
+
+        threading.Thread(target=worker, name="JARVIS-MANUAL-UPDATE-CHECK", daemon=True).start()
+
+    def _finish_manual_update_check(self, info, error=""):
+        self._update_download_active = False
+        if error:
+            try:
+                self.update_button.configure(text="ATUALIZAR", state="normal")
+            except Exception:
+                pass
+            messagebox.showerror(
+                "Atualização do JARVIS",
+                "Não consegui consultar as atualizações agora.\n\n" + str(error),
+            )
+            return
+        if info is None:
+            self._pending_update_info = None
+            try:
+                self.update_button.configure(text="ATUALIZADO", state="normal")
+                self.root.after(1800, lambda: self.update_button.configure(text="ATUALIZAR", state="normal"))
+            except Exception:
+                pass
+            messagebox.showinfo(
+                "Atualização do JARVIS",
+                f"Você já está na versão mais recente ({JARVIS_VERSION}).",
+            )
+            return
+        self._show_update_available(info)
+        # O clique do usuário já expressou intenção de atualizar; depois da
+        # consulta, abre imediatamente a confirmação da versão encontrada.
+        self._update_now()
 
     def _set_update_progress(self, downloaded: int, total: int):
         if not self.update_button:
@@ -2923,8 +2976,11 @@ class JarvisGUI:
             pass
 
     def _update_now(self):
+        if self._update_download_active:
+            return
         info = self._pending_update_info
-        if info is None or self._update_download_active:
+        if info is None:
+            self._manual_update_check()
             return
         notes = " ".join(str(getattr(info, "notes", "") or "").split())
         if len(notes) > 420:
@@ -3024,7 +3080,7 @@ class JarvisGUI:
             )
 
     def _create_main_layout(self):
-        """Interface 13.10.1: estrutura limpa, tipografia mais legivel e identidade sem emblema."""
+        """Interface principal com identidade visual e atualização sempre acessível."""
         main_container = ctk.CTkFrame(self.root, fg_color="#212121")
         main_container.pack(fill="both", expand=True)
 
@@ -3035,7 +3091,28 @@ class JarvisGUI:
 
         identity = ctk.CTkFrame(header, fg_color="transparent")
         identity.pack(side="left", fill="y", padx=(2, 10))
-        # 13.10.1: emblema J ocultado a pedido; identidade fica tipografica por enquanto.
+
+        # Usa o mesmo capacete/cabeça do ícone oficial do JARVIS no cabeçalho.
+        # O asset já acompanha o instalador em jarvis.ico, então a troca também
+        # funciona em Hot Update sem precisar recompilar o executável.
+        try:
+            logo_path = Path(self.project_dir) / "jarvis.ico"
+            if logo_path.is_file():
+                with Image.open(logo_path) as source_logo:
+                    logo_image = source_logo.convert("RGBA").copy()
+                self._brand_logo_image = ctk.CTkImage(
+                    light_image=logo_image, dark_image=logo_image, size=(38, 38)
+                )
+                ctk.CTkLabel(
+                    identity, text="", image=self._brand_logo_image,
+                    width=40, height=40, fg_color="transparent"
+                ).pack(side="left", padx=(0, 8), pady=3)
+        except Exception as exc:
+            try:
+                self.logger.warning(f"Logo jarvis.ico indisponível na interface: {exc}", "GUI")
+            except Exception:
+                pass
+
         title_box = ctk.CTkFrame(identity, fg_color="transparent")
         title_box.pack(side="left", padx=(0, 0), pady=5)
         ctk.CTkLabel(
@@ -3059,12 +3136,14 @@ class JarvisGUI:
         header_tools = ctk.CTkFrame(header, fg_color="transparent")
         header_tools.pack(side="right", fill="y", padx=(8, 2), pady=6)
         self.update_button = ctk.CTkButton(
-            header_tools, text="ATUALIZAR", width=92, height=26, corner_radius=9,
+            header_tools, text="ATUALIZAR", width=96, height=26, corner_radius=9,
             fg_color="#5F91FF", hover_color="#78A3FF", text_color="#11141A",
             font=ctk.CTkFont(family="Bahnschrift", size=8, weight="bold"),
             command=self._update_now,
         )
-        # Só aparece quando uma release mais nova e íntegra for encontrada.
+        # Fica sempre visível. Sem release pendente, o clique faz uma
+        # verificação manual; quando há release, mostra a versão encontrada.
+        self.update_button.pack(side="left", padx=(0, 7), pady=4)
         self.clock_label = ctk.CTkLabel(
             header_tools, text="--:--", font=ctk.CTkFont(family="Consolas", size=10), text_color="#8B9098"
         )

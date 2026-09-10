@@ -21,8 +21,16 @@ SetupIconFile=..\jarvis.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64
 SolidCompression=yes
-WizardStyle=modern
-WizardSizePercent=110
+WizardStyle=modern dark windows11 hidebevels includetitlebar
+WizardSizePercent=120,120
+WizardResizable=no
+WizardBackColor=#07111F
+WizardImageFile=..\installer\jarvis_wizard.png
+WizardImageBackColor=#07111F
+WizardSmallImageFile=..\installer\jarvis_small.png
+WizardSmallImageBackColor=#07111F
+DisableWelcomePage=no
+DisableReadyPage=no
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -97,4 +105,17 @@ end;
 function IsUpdateMode: Boolean;
 begin
   Result := HasCommandLineSwitch('/UPDATE=1');
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = wpReady then
+    WizardForm.NextButton.Caption := 'INSTALAR'
+  else if CurPageID = wpFinished then
+    WizardForm.NextButton.Caption := 'CONCLUIR'
+  else
+    WizardForm.NextButton.Caption := 'AVANCAR';
+
+  WizardForm.BackButton.Caption := 'VOLTAR';
+  WizardForm.CancelButton.Caption := 'CANCELAR';
 end;
