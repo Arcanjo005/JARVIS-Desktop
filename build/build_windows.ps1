@@ -41,6 +41,7 @@ $PluginsDir   = Join-Path $Root "plugins"
 $UpdateConfig = Join-Path $Root "update_config.json"
 $DistDir      = Join-Path $Root "dist"
 $WorkDir      = Join-Path $Root "build\pyinstaller"
+$HooksDir     = Join-Path $Root "build\pyinstaller_hooks"
 $SpecDir      = Join-Path $Root "build"
 $SpecFile     = Join-Path $SpecDir "JARVIS.spec"
 $ExePath      = Join-Path $DistDir "JARVIS\JARVIS.exe"
@@ -59,12 +60,20 @@ Assert-Exists (Join-Path $Root "build\requirements-build.txt") "build/requiremen
 Invoke-PythonStep "Restaurando assets grandes e validando integridade" @("tools/restore_large_assets.py")
 Invoke-PythonStep "Preparando metadados da release $Version" @("tools/prepare_release.py", "--version", $Version, "--repository", $Repository, "--run-number", $RunNumber)
 
-# prepare_release.py cria/atualiza version_info.txt.
 Assert-Exists $VersionFile "build/version_info.txt"
 
 Invoke-PythonStep "Atualizando pip" @("-m", "pip", "install", "--upgrade", "pip")
 Invoke-PythonStep "Instalando dependencias do JARVIS" @("-m", "pip", "install", "-r", "requirements.txt")
 Invoke-PythonStep "Instalando dependencias de build" @("-m", "pip", "install", "-r", "build/requirements-build.txt")
+
+# Preflight especifico do VAD. O pacote de distribuicao se chama
+# "webrtcvad-wheels", enquanto o modulo importado pelo JARVIS se chama
+# "webrtcvad". Isso evita descobrir a incompatibilidade somente no PyInstaller.
+Write-Host "[JARVIS] Validando WebRTC VAD e metadados"
+& python -c "import importlib.metadata as m; import webrtcvad, _webrtcvad; print('webrtcvad-wheels=' + m.version('webrtcvad-wheels')); print('webrtcvad=' + str(getattr(webrtcvad, '__version__', 'unknown')))"
+if ($LASTEXITCODE -ne 0) {
+    throw "WebRTC VAD instalado de forma incompleta: webrtcvad-wheels/webrtcvad/_webrtcvad"
+}
 
 Write-Host "[JARVIS] Executando gates de regressao antes de empacotar"
 & python -m compileall -q .
@@ -74,18 +83,54 @@ foreach ($TestFile in @("jarvis_desktop_selftest.py", "jarvis_build16_selftest.p
     if ($LASTEXITCODE -ne 0) { throw "$TestFile falhou com codigo $LASTEXITCODE" }
 }
 
-Remove-Item -Recurse -Force $WorkDir, (Join-Path $DistDir "JARVIS") -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force $WorkDir, (Join-Path $DistDir "JARVIS"), $HooksDir -ErrorAction SilentlyContinue
 Remove-Item -Force $SpecFile -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force $WorkDir | Out-Null
+New-Item -ItemType Directory -Force $WorkDir, $HooksDir | Out-Null
+
+# HOTFIX 2:
+# pyinstaller-hooks-contrib possui um hook chamado hook-webrtcvad.py que chama
+# copy_metadata('webrtcvad'). No nosso runtime, o modulo e "webrtcvad", mas a
+# distribuicao instalada e "webrtcvad-wheels". O hook oficial entao procura um
+# metadado que nao existe e aborta a Analysis.
+#
+# --additional-hooks-dir tem precedencia sobre os hooks contribuidos; este hook
+# local usa o nome correto da distribuicao e inclui explicitamente a extensao
+# nativa _webrtcvad usada por webrtcvad.py.
+$WebRtcHook = @'
+from PyInstaller.utils.hooks import copy_metadata
+
+datas = copy_metadata("webrtcvad-wheels")
+hiddenimports = ["_webrtcvad"]
+'@
+$WebRtcHookPath = Join-Path $HooksDir "hook-webrtcvad.py"
+Set-Content -LiteralPath $WebRtcHookPath -Value $WebRtcHook -Encoding utf8
+Assert-Exists $WebRtcHookPath "hook local do webrtcvad"
+
+# Hook local do google.genai: coleta submodulos/dados necessarios, mas ignora a
+# arvore de testes do SDK. Isso elimina o aviso de pytest ausente e reduz lixo no
+# executavel sem remover o SDK usado pelo JARVIS.
+$GoogleGenAiHook = @'
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
+
+hiddenimports = collect_submodules(
+    "google.genai",
+    filter=lambda name: not name.startswith("google.genai.tests"),
+)
+datas = collect_data_files("google.genai")
+datas += copy_metadata("google-genai")
+'@
+$GoogleGenAiHookPath = Join-Path $HooksDir "hook-google.genai.py"
+Set-Content -LiteralPath $GoogleGenAiHookPath -Value $GoogleGenAiHook -Encoding utf8
+Assert-Exists $GoogleGenAiHookPath "hook local do google.genai"
 
 Write-Host "[JARVIS] Gerando JARVIS.exe standalone (onedir, runtime embutido)"
 Write-Host "[JARVIS] Raiz do projeto: $Root"
 Write-Host "[JARVIS] Dados: $DataDir"
 Write-Host "[JARVIS] Plugins: $PluginsDir"
+Write-Host "[JARVIS] Hooks locais: $HooksDir"
 
-# IMPORTANTE: todos os caminhos-fonte abaixo sao ABSOLUTOS.
-# O .spec e salvo em build/, e caminhos relativos seriam reinterpretados como build/data,
-# que foi a causa da falha do primeiro build no GitHub Actions.
+# Todos os caminhos-fonte sao ABSOLUTOS. O .spec e salvo em build/, portanto
+# caminhos relativos seriam reinterpretados a partir de build/.
 $PyInstallerArgs = @(
     "--noconfirm",
     "--clean",
@@ -98,13 +143,14 @@ $PyInstallerArgs = @(
     "--distpath", $DistDir,
     "--workpath", $WorkDir,
     "--specpath", $SpecDir,
+    "--additional-hooks-dir", $HooksDir,
     "--add-data", "$DataDir;data",
     "--add-data", "$PluginsDir;plugins",
     "--add-data", "$UpdateConfig;.",
     "--add-data", "$IconFile;.",
     "--collect-all", "customtkinter",
-    "--collect-all", "google.genai",
     "--collect-submodules", "edge_tts",
+    "--hidden-import", "_webrtcvad",
     "--hidden-import", "win32timezone",
     "--hidden-import", "pythoncom",
     "--hidden-import", "pywintypes",
@@ -120,7 +166,11 @@ if (!(Test-Path -LiteralPath $ExePath)) {
     throw "PyInstaller terminou sem criar o executavel esperado: $ExePath"
 }
 
-# Pastas de runtime gravaveis. Codigo e binarios continuam protegidos pelo instalador.
+# Confirmacao estrutural antes de gerar o instalador.
+Assert-Exists (Join-Path $DistDir "JARVIS\data") "data empacotado"
+Assert-Exists (Join-Path $DistDir "JARVIS\plugins") "plugins empacotados"
+Assert-Exists (Join-Path $DistDir "JARVIS\update_config.json") "update_config empacotado"
+
 $RuntimeDirs = @(
     (Join-Path $DistDir "JARVIS\data"),
     (Join-Path $DistDir "JARVIS\logs"),
