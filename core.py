@@ -82,6 +82,11 @@ class JarvisCore:
         self._response_cache = {}
         self._response_cache_lock = threading.Lock()
         self._client_init_lock = threading.RLock()
+        # Saúde remota separada de "chave configurada". Diagnóstico não deve
+        # declarar o serviço online só porque o Client existe.
+        self.last_remote_success_at = None
+        self.last_remote_error_at = None
+        self.last_remote_error = ""
         self._load_api_key()
         # Build 15: importar/inicializar o SDK remoto nao bloqueia mais o boot.
         # A GUI o preaquece em background; o primeiro turno tambem possui fallback
@@ -1069,8 +1074,22 @@ class JarvisCore:
         if error is not None:
             error_text = str(error or "")
             # Log útil para diagnóstico, sem transformar a exceção em fala do JARVIS.
+            self.last_remote_error = f"{type(error).__name__}: {error_text[:240]}"
+            self.last_remote_error_at = datetime.now().isoformat(timespec="seconds")
             self.logger.error(error, f"Falha Gemini ({type(error).__name__}): {error_text[:240]}", "CORE")
             self._abandon_gemini_generation(generation, request_client, "erro de transporte")
+            transient_busy = bool(
+                re.search(r"(?:\b503\b|UNAVAILABLE|high demand|temporar(?:y|ily)|overloaded)", error_text, re.I)
+            )
+            if transient_busy and not _remote_retry and not full_response:
+                # Picos 503 do Gemini são transitórios. Uma única nova conexão
+                # evita obrigar o usuário a repetir a pergunta sem criar loop.
+                self.logger.warning("Gemini temporariamente ocupado; tentando novamente uma vez.", "CORE")
+                time.sleep(0.45)
+                return self.process_message_stream(
+                    message, conversation_history, memories, system_commands_info,
+                    on_chunk=on_chunk, _remote_retry=True, speaker_name=speaker_name, source=source,
+                )
             # Cooldown curto apenas para falha explícita; uma chamada seguinte
             # ainda pode usar o cliente renovado quase imediatamente.
             self._gemini_disabled_until = time.monotonic() + min(self.GEMINI_COOLDOWN_S, 1.2)
@@ -1087,6 +1106,8 @@ class JarvisCore:
 
         cleaned = self._clean_response(response_text)
         self.last_total_response_ms = int(round((time.monotonic() - request_started) * 1000))
+        self.last_remote_success_at = datetime.now().isoformat(timespec="seconds")
+        self.last_remote_error = ""
         self.logger.system(
             f"Resposta concluída: {len(cleaned)} caracteres em {self.last_total_response_ms} ms", "CORE"
         )
@@ -1234,12 +1255,10 @@ class JarvisCore:
         return {
             "available": self.is_available(),
             "key_configured": self.api_key is not None,
-            "model": (
-                self.FAST_MODEL
-                if self.is_available()
-                else None
-            ),
-            "last_check": datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
+            "model": self.FAST_MODEL if self.is_available() else None,
+            "last_success": self.last_remote_success_at,
+            "last_error_at": self.last_remote_error_at,
+            "last_error": self.last_remote_error,
+            "cooldown_active": time.monotonic() < float(self._gemini_disabled_until or 0.0),
+            "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }

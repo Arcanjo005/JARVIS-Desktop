@@ -368,6 +368,26 @@ class JarvisGUI:
     COMPOSER_MAX_HEIGHT = 124
     COMPOSER_MAX_CHARS = 16000
 
+    # JARVIS 1.1.3 — Blue Core Interface. Paleta concentrada em grafite,
+    # azul elétrico e ciano. O objetivo é parecer um console premium, não uma
+    # coleção de widgets: superfícies discretas, hierarquia forte e contraste.
+    UI_BG = "#060A11"
+    UI_SURFACE = "#0B111B"
+    UI_SURFACE_2 = "#101927"
+    UI_SURFACE_3 = "#142235"
+    UI_PANEL = "#080E17"
+    UI_BORDER = "#182638"
+    UI_BORDER_STRONG = "#28557B"
+    UI_ACCENT = "#35B9FF"
+    UI_ACCENT_HOVER = "#62C9FF"
+    UI_ACCENT_2 = "#5C7CFF"
+    UI_TEXT = "#F4F8FC"
+    UI_MUTED = "#8190A5"
+    UI_MUTED_2 = "#5E6B7D"
+    UI_SUCCESS = "#38E3A3"
+    UI_WARNING = "#FFC96B"
+    UI_DANGER = "#FF667A"
+
     # Esfera do modo de voz.
     VOICE_ORB_WIDTH = 480
     VOICE_ORB_HEIGHT = 430
@@ -520,7 +540,7 @@ class JarvisGUI:
         self._history_restore_job = None
         self._deferred_visual_messages = []
         self._composer_placeholder_active = False
-        self._composer_placeholder_text = f"Pergunte ou diga um comando ao {PUBLIC_NAME}..."
+        self._composer_placeholder_text = f"Converse com o {PUBLIC_NAME} ou peça uma ação no Windows..."
 
         # TTS progressivo: começa a falar antes da resposta terminar de gerar.
         self._voice_stream_tts_buffer = ""
@@ -644,6 +664,10 @@ class JarvisGUI:
         self.audio_device_manager = None
         self.vision_system = None
         self.diagnostics_manager = None
+        # Guarda a causa real de módulos opcionais que falharam no hot runtime.
+        # Antes esses imports eram engolidos silenciosamente e o diagnóstico
+        # caía num resumo de 4 linhas, escondendo a origem do problema.
+        self._advanced_import_errors = {}
 
         # Build 11 - Agent Runtime / contexto operacional.
         self.operational_context = None
@@ -1980,6 +2004,90 @@ class JarvisGUI:
             "voice_interrupt"
         )
 
+    def _load_optional_runtime_symbol(self, module_name: str, symbol: str):
+        """Importa um módulo opcional e preserva o erro para diagnóstico/retry."""
+        scope = globals()
+        current = scope.get(symbol)
+        if current is not None:
+            return current
+        try:
+            module = __import__(module_name, fromlist=[symbol])
+            value = getattr(module, symbol)
+            scope[symbol] = value
+            try:
+                self._advanced_import_errors.pop(symbol, None)
+            except Exception:
+                pass
+            return value
+        except Exception as exc:
+            scope[symbol] = None
+            detail = f"{type(exc).__name__}: {exc}"
+            try:
+                self._advanced_import_errors[symbol] = detail
+            except Exception:
+                pass
+            try:
+                self.logger.warning(
+                    f"Import opcional {module_name}.{symbol} falhou: {detail}",
+                    "ADVANCED",
+                )
+            except Exception:
+                pass
+            return None
+
+    def _ensure_window_manager(self, force: bool = False) -> bool:
+        """Carrega/recarrega o controle de janelas sob demanda."""
+        global AdvancedWindows
+        if self.window_manager is not None and not force:
+            return True
+        if force:
+            self.window_manager = None
+        klass = AdvancedWindows or self._load_optional_runtime_symbol(
+            "advanced_windows", "AdvancedWindows"
+        )
+        if klass is None:
+            return False
+        try:
+            self.window_manager = klass(logger=self.logger)
+            self._advanced_import_errors.pop("AdvancedWindows", None)
+            return True
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            self._advanced_import_errors["AdvancedWindows"] = detail
+            self.window_manager = None
+            try:
+                self.logger.warning(f"AdvancedWindows indisponível: {detail}", "ADVANCED")
+            except Exception:
+                pass
+            return False
+
+    def _ensure_diagnostics_manager(self) -> bool:
+        """Garante que o diagnóstico completo não dependa da ordem do boot."""
+        global DiagnosticsManager
+        if self.diagnostics_manager is not None:
+            return True
+        klass = DiagnosticsManager or self._load_optional_runtime_symbol(
+            "diagnostics_manager", "DiagnosticsManager"
+        )
+        if klass is None:
+            return False
+        try:
+            self.diagnostics_manager = klass(
+                project_dir=self.project_dir,
+                logger=self.logger,
+            )
+            self._advanced_import_errors.pop("DiagnosticsManager", None)
+            return True
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            self._advanced_import_errors["DiagnosticsManager"] = detail
+            self.diagnostics_manager = None
+            try:
+                self.logger.warning(f"DiagnosticsManager indisponível: {detail}", "ADVANCED")
+            except Exception:
+                pass
+            return False
+
     def _setup_advanced_modules(self):
         """Inicializa recursos avancados em background, fail-open."""
         global AdvancedWindows, SafetyManager, AudioDeviceManager, VisionSystem, DiagnosticsManager
@@ -1999,26 +2107,12 @@ class JarvisGUI:
             ("goal_executor", "GoalExecutor"),
             ("observer_engine", "ObserverEngine"),
         )
-        scope = globals()
         for module_name, symbol in imports:
-            if scope.get(symbol) is not None:
-                continue
-            try:
-                module = __import__(module_name, fromlist=[symbol])
-                scope[symbol] = getattr(module, symbol)
-            except Exception:
-                scope[symbol] = None
+            self._load_optional_runtime_symbol(module_name, symbol)
 
-        try:
-            if AdvancedWindows:
-                self.window_manager = AdvancedWindows(
-                    logger=self.logger
-                )
-        except Exception as e:
-            self.logger.warning(
-                f"AdvancedWindows indisponível: {e}",
-                "ADVANCED"
-            )
+        # Use o mesmo caminho de recuperação usado pelos comandos/diagnóstico;
+        # assim erro de construtor também fica visível e pode ser tentado de novo.
+        self._ensure_window_manager()
 
         try:
             if SafetyManager:
@@ -2057,17 +2151,7 @@ class JarvisGUI:
                 "ADVANCED"
             )
 
-        try:
-            if DiagnosticsManager:
-                self.diagnostics_manager = DiagnosticsManager(
-                    project_dir=self.project_dir,
-                    logger=self.logger
-                )
-        except Exception as e:
-            self.logger.warning(
-                f"DiagnosticsManager indisponível: {e}",
-                "ADVANCED"
-            )
+        self._ensure_diagnostics_manager()
 
         # Build 11: contexto operacional e agente autônomo são fail-open.
         try:
@@ -2836,9 +2920,10 @@ class JarvisGUI:
         
         # Janela principal
         self.root = ctk.CTk()
-        self.root.title(f"{PUBLIC_NAME} {JARVIS_VERSION} - Assistente de Sistema")
-        self.root.geometry("1280x820")
-        self.root.configure(fg_color="#212121")
+        self.root.title(f"{PUBLIC_NAME} {JARVIS_VERSION} // Desktop Intelligence")
+        self.root.geometry("1320x840")
+        self.root.minsize(1040, 680)
+        self.root.configure(fg_color=self.UI_BG)
 
         # Transparencia global da interface.
         # 1.00 = totalmente opaca | 0.80 = mais transparente.
@@ -2884,6 +2969,30 @@ class JarvisGUI:
         icon = ctk.CTkImage(light_image=image, dark_image=image, size=(size, size))
         self._ui_icon_cache[key] = icon
         return icon
+
+    def _get_brand_icon(self, size: int = 38):
+        """Carrega o capacete do jarvis.ico uma vez e cria variantes nítidas."""
+        size = max(16, int(size))
+        cached = self._brand_icon_cache.get(size)
+        if cached is not None:
+            return cached
+        try:
+            logo_path = Path(self.project_dir) / "jarvis.ico"
+            if not logo_path.is_file():
+                return None
+            with Image.open(logo_path) as source_logo:
+                # Alguns ICOs guardam várias resoluções; PIL seleciona a melhor e
+                # o CTk cuida do DPI. Mantemos RGBA para preservar transparência.
+                logo = source_logo.convert("RGBA").copy()
+            image = ctk.CTkImage(light_image=logo, dark_image=logo, size=(size, size))
+            self._brand_icon_cache[size] = image
+            return image
+        except Exception as exc:
+            try:
+                self.logger.warning(f"Ícone de marca indisponível: {exc}", "GUI")
+            except Exception:
+                pass
+            return None
 
     def _background_update_check(self):
         """Consulta Releases fora da thread da interface; falha de rede é silenciosa."""
@@ -3080,110 +3189,146 @@ class JarvisGUI:
             )
 
     def _create_main_layout(self):
-        """Interface principal com identidade visual e atualização sempre acessível."""
-        main_container = ctk.CTkFrame(self.root, fg_color="#212121")
+        """JARVIS Blue Core: cockpit limpo, hierarquia forte e update visível."""
+        main_container = ctk.CTkFrame(self.root, fg_color=self.UI_BG)
         main_container.pack(fill="both", expand=True)
 
-        header = ctk.CTkFrame(main_container, fg_color="#212121", corner_radius=0, height=50)
-        header.pack(fill="x", padx=14, pady=(6, 2))
+        # Linha de energia: assinatura visual pequena que dá identidade sem
+        # roubar espaço do chat.
+        ctk.CTkFrame(
+            main_container, height=2, corner_radius=0, fg_color=self.UI_ACCENT
+        ).pack(fill="x")
+
+        header = ctk.CTkFrame(
+            main_container, fg_color=self.UI_SURFACE, corner_radius=16, height=66,
+            border_width=1, border_color=self.UI_BORDER
+        )
+        header.pack(fill="x", padx=12, pady=(10, 6))
         header.pack_propagate(False)
         header.bind("<ButtonPress-1>", lambda event: self._begin_native_window_drag(self.root))
 
         identity = ctk.CTkFrame(header, fg_color="transparent")
-        identity.pack(side="left", fill="y", padx=(2, 10))
+        identity.pack(side="left", fill="y", padx=(10, 10))
 
-        # Usa o mesmo capacete/cabeça do ícone oficial do JARVIS no cabeçalho.
-        # O asset já acompanha o instalador em jarvis.ico, então a troca também
-        # funciona em Hot Update sem precisar recompilar o executável.
-        try:
-            logo_path = Path(self.project_dir) / "jarvis.ico"
-            if logo_path.is_file():
-                with Image.open(logo_path) as source_logo:
-                    logo_image = source_logo.convert("RGBA").copy()
-                self._brand_logo_image = ctk.CTkImage(
-                    light_image=logo_image, dark_image=logo_image, size=(38, 38)
-                )
-                ctk.CTkLabel(
-                    identity, text="", image=self._brand_logo_image,
-                    width=40, height=40, fg_color="transparent"
-                ).pack(side="left", padx=(0, 8), pady=3)
-        except Exception as exc:
-            try:
-                self.logger.warning(f"Logo jarvis.ico indisponível na interface: {exc}", "GUI")
-            except Exception:
-                pass
+        logo_shell = ctk.CTkFrame(
+            identity, width=48, height=48, corner_radius=14, fg_color="#0C1B2A",
+            border_width=1, border_color="#1F5478"
+        )
+        logo_shell.pack(side="left", padx=(0, 10), pady=8)
+        logo_shell.pack_propagate(False)
+        self._brand_logo_image = self._get_brand_icon(38)
+        if self._brand_logo_image is not None:
+            ctk.CTkLabel(
+                logo_shell, text="", image=self._brand_logo_image, fg_color="transparent"
+            ).pack(expand=True)
+        else:
+            ctk.CTkLabel(
+                logo_shell, text="J", text_color=self.UI_ACCENT,
+                font=ctk.CTkFont(family="Bahnschrift", size=18, weight="bold")
+            ).pack(expand=True)
 
         title_box = ctk.CTkFrame(identity, fg_color="transparent")
-        title_box.pack(side="left", padx=(0, 0), pady=5)
+        title_box.pack(side="left", pady=8)
+        top_title = ctk.CTkFrame(title_box, fg_color="transparent")
+        top_title.pack(anchor="w")
         ctk.CTkLabel(
-            title_box, text=PUBLIC_NAME,
-            font=ctk.CTkFont(family="Bahnschrift", size=14, weight="bold"),
-            text_color="#FAFAFC"
-        ).pack(anchor="w")
+            top_title, text=PUBLIC_NAME,
+            font=ctk.CTkFont(family="Bahnschrift", size=16, weight="bold"),
+            text_color=self.UI_TEXT
+        ).pack(side="left")
+        ctk.CTkLabel(
+            top_title, text=f"  //  {JARVIS_VERSION}",
+            font=ctk.CTkFont(family="Consolas", size=9, weight="bold"),
+            text_color=self.UI_ACCENT
+        ).pack(side="left", pady=(3, 0))
+
         status_row = ctk.CTkFrame(title_box, fg_color="transparent")
-        status_row.pack(anchor="w")
-        self.status_dot = ctk.CTkLabel(status_row, text="●", font=ctk.CTkFont(size=10), text_color="#31D47D", width=12)
+        status_row.pack(anchor="w", pady=(1, 0))
+        self.status_dot = ctk.CTkLabel(
+            status_row, text="●", font=ctk.CTkFont(size=9),
+            text_color=self.UI_SUCCESS, width=11
+        )
         self.status_dot.pack(side="left")
         self.status_label = ctk.CTkLabel(
-            status_row, text="ONLINE", font=ctk.CTkFont(family="Tahoma", size=8, weight="bold"), text_color="#9EA3AD"
+            status_row, text="ONLINE",
+            font=ctk.CTkFont(family="Bahnschrift", size=8, weight="bold"),
+            text_color="#AAB6C6"
         )
-        self.status_label.pack(side="left", padx=(1, 0))
+        self.status_label.pack(side="left", padx=(2, 0))
+        ctk.CTkLabel(
+            status_row, text="  •  DESKTOP INTELLIGENCE",
+            font=ctk.CTkFont(family="Consolas", size=7), text_color=self.UI_MUTED_2
+        ).pack(side="left", pady=(1, 0))
         self.activity_label = ctk.CTkLabel(
-            status_row, text="Pronto", font=ctk.CTkFont(family="Tahoma", size=8), text_color="#777D87"
+            status_row, text="Pronto",
+            font=ctk.CTkFont(family="Segoe UI", size=8), text_color=self.UI_MUTED
         )
-        self.activity_label.pack(side="left", padx=(8, 0))
+        self.activity_label.pack(side="left", padx=(10, 0))
 
         header_tools = ctk.CTkFrame(header, fg_color="transparent")
-        header_tools.pack(side="right", fill="y", padx=(8, 2), pady=6)
+        header_tools.pack(side="right", fill="y", padx=(8, 10), pady=9)
+
+        self.source_badge = ctk.CTkLabel(
+            header_tools, text="LOCAL", width=58, height=28, corner_radius=10,
+            fg_color="#10251F", text_color="#67E7AF",
+            font=ctk.CTkFont(family="Bahnschrift", size=8, weight="bold")
+        )
+        self.source_badge.pack(side="left", padx=(0, 7), pady=4)
+
         self.update_button = ctk.CTkButton(
-            header_tools, text="ATUALIZAR", width=96, height=26, corner_radius=9,
-            fg_color="#5F91FF", hover_color="#78A3FF", text_color="#11141A",
-            font=ctk.CTkFont(family="Bahnschrift", size=8, weight="bold"),
+            header_tools, text="ATUALIZAR", width=108, height=32, corner_radius=11,
+            fg_color=self.UI_ACCENT, hover_color=self.UI_ACCENT_HOVER,
+            text_color="#041019", border_width=0,
+            font=ctk.CTkFont(family="Bahnschrift", size=9, weight="bold"),
             command=self._update_now,
         )
-        # Fica sempre visível. Sem release pendente, o clique faz uma
-        # verificação manual; quando há release, mostra a versão encontrada.
-        self.update_button.pack(side="left", padx=(0, 7), pady=4)
-        self.clock_label = ctk.CTkLabel(
-            header_tools, text="--:--", font=ctk.CTkFont(family="Consolas", size=10), text_color="#8B9098"
-        )
-        self.clock_label.pack(side="left", padx=(0, 8), pady=7)
-        self.source_badge = ctk.CTkLabel(
-            header_tools, text="LOCAL", width=52, height=24, corner_radius=10,
-            fg_color="#1E3028", text_color="#74DFA3", font=ctk.CTkFont(family="Bahnschrift", size=8, weight="bold")
-        )
-        self.source_badge.pack(side="left", padx=(0, 6), pady=4)
+        self.update_button.pack(side="left", padx=(0, 7), pady=2)
+
         self.api_button = ctk.CTkButton(
-            header_tools, text="API", width=42, height=26, corner_radius=9,
-            fg_color="transparent", border_width=1, border_color="#3B4048",
-            hover_color="#303238", text_color="#AEB4BE",
+            header_tools, text="API", width=44, height=32, corner_radius=11,
+            fg_color=self.UI_SURFACE_2, border_width=1, border_color=self.UI_BORDER_STRONG,
+            hover_color=self.UI_SURFACE_3, text_color="#B9DFFF",
             font=ctk.CTkFont(family="Bahnschrift", size=8, weight="bold"),
             command=self._open_api_settings,
         )
-        self.api_button.pack(side="left", padx=(0, 6), pady=4)
-        self.sidebar_state_button = ctk.CTkButton(
-            header_tools, text="", image=self._get_ui_icon("sidebar", 17, "#B8BDC6"), width=30, height=30, corner_radius=10,
-            fg_color="transparent", hover_color="#303238", text_color="#B8BDC6",
-            command=self._cycle_sidebar_state
-        )
-        self.sidebar_state_button.pack(side="left", pady=1)
+        self.api_button.pack(side="left", padx=(0, 7), pady=2)
 
-        content = ctk.CTkFrame(main_container, fg_color="#212121")
+        self.clock_label = ctk.CTkLabel(
+            header_tools, text="--:--", width=52,
+            font=ctk.CTkFont(family="Consolas", size=10, weight="bold"),
+            text_color="#8FA0B6"
+        )
+        self.clock_label.pack(side="left", padx=(0, 7), pady=7)
+
+        self.sidebar_state_button = ctk.CTkButton(
+            header_tools, text="", image=self._get_ui_icon("sidebar", 17, "#B9C6D7"),
+            width=32, height=32, corner_radius=11, fg_color=self.UI_SURFACE_2,
+            border_width=1, border_color=self.UI_BORDER, hover_color=self.UI_SURFACE_3,
+            text_color="#B9C6D7", command=self._cycle_sidebar_state
+        )
+        self.sidebar_state_button.pack(side="left", pady=2)
+
+        content = ctk.CTkFrame(main_container, fg_color=self.UI_BG)
         self.content_frame = content
         content.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         content.grid_rowconfigure(0, weight=1)
         self._sidebar_width = self._load_sidebar_width()
         content.grid_columnconfigure(0, weight=0, minsize=self._sidebar_width)
-        content.grid_columnconfigure(1, weight=0, minsize=5)
+        content.grid_columnconfigure(1, weight=0, minsize=6)
         content.grid_columnconfigure(2, weight=1)
 
-        side_panel = ctk.CTkFrame(content, fg_color="#171717", corner_radius=12, width=self._sidebar_width)
+        side_panel = ctk.CTkFrame(
+            content, fg_color=self.UI_PANEL, corner_radius=18, width=self._sidebar_width,
+            border_width=1, border_color=self.UI_BORDER
+        )
         self.side_panel = side_panel
-        side_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 2))
+        side_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
         side_panel.grid_propagate(False)
         self._create_system_monitor(side_panel)
 
-        splitter = ctk.CTkFrame(content, width=5, corner_radius=3, fg_color="#27292D", cursor="sb_h_double_arrow")
+        splitter = ctk.CTkFrame(
+            content, width=5, corner_radius=3, fg_color=self.UI_BORDER, cursor="sb_h_double_arrow"
+        )
         self.sidebar_splitter = splitter
         splitter.grid(row=0, column=1, sticky="ns", padx=1)
         splitter.bind("<ButtonPress-1>", self._sidebar_resize_start)
@@ -3198,8 +3343,8 @@ class JarvisGUI:
         if self._sidebar_state != "full":
             self.root.after(20, self._apply_sidebar_state, self._sidebar_state)
 
-        chat_panel = ctk.CTkFrame(content, fg_color="#212121", corner_radius=0)
-        chat_panel.grid(row=0, column=2, sticky="nsew", padx=(3, 0))
+        chat_panel = ctk.CTkFrame(content, fg_color=self.UI_BG, corner_radius=0)
+        chat_panel.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
         self._create_chat_area(chat_panel)
 
     def _create_tech_j_badge(self, parent, size=36, bg="#212121"):
@@ -3293,184 +3438,208 @@ class JarvisGUI:
         self._save_sidebar_width()
 
     def _create_chat_area(self, parent):
-        """Área de conversa da 1.0 Beta, com ações destrutivas fora do cabeçalho."""
-        wrapper = ctk.CTkFrame(parent, fg_color="#212121")
-        wrapper.pack(fill="both", expand=True, padx=10, pady=(4, 10))
+        """Área principal Blue Core: conversa primeiro, controles em segundo plano."""
+        wrapper = ctk.CTkFrame(parent, fg_color=self.UI_BG)
+        wrapper.pack(fill="both", expand=True, padx=(10, 6), pady=(4, 6))
 
-        chat_header = ctk.CTkFrame(wrapper, fg_color="transparent", height=38)
-        chat_header.pack(fill="x", pady=(0, 6))
+        chat_header = ctk.CTkFrame(wrapper, fg_color="transparent", height=48)
+        chat_header.pack(fill="x", padx=8, pady=(0, 7))
+
+        title_stack = ctk.CTkFrame(chat_header, fg_color="transparent")
+        title_stack.pack(side="left")
+        ctk.CTkLabel(
+            title_stack, text="CONVERSA ATIVA",
+            font=ctk.CTkFont(family="Consolas", size=7, weight="bold"),
+            text_color=self.UI_ACCENT
+        ).pack(anchor="w")
         self.current_conversation_label = ctk.CTkLabel(
-            chat_header, text="Nova conversa",
-            font=ctk.CTkFont(family="Bahnschrift", size=13, weight="bold"), text_color="#F5F6F8"
+            title_stack, text="Nova conversa",
+            font=ctk.CTkFont(family="Bahnschrift", size=16, weight="bold"),
+            text_color=self.UI_TEXT
         )
-        self.current_conversation_label.pack(side="left", padx=4)
+        self.current_conversation_label.pack(anchor="w", pady=(1, 0))
 
         chat_actions = ctk.CTkFrame(chat_header, fg_color="transparent")
-        chat_actions.pack(side="right")
+        chat_actions.pack(side="right", pady=5)
         ctk.CTkButton(
-            chat_actions, text="Copiar", image=self._get_ui_icon("copy", 14, "#D8DBE2"), width=76, height=28, corner_radius=9,
-            fg_color="#2B2D31", hover_color="#373A40", text_color="#D8DBE2",
-            compound="left", font=ctk.CTkFont(family="Tahoma", size=9, weight="bold"),
+            chat_actions, text="COPIAR", image=self._get_ui_icon("copy", 14, "#B9C6D7"),
+            width=82, height=30, corner_radius=10, fg_color=self.UI_SURFACE_2,
+            border_width=1, border_color=self.UI_BORDER, hover_color=self.UI_SURFACE_3,
+            text_color="#C8D3E0", compound="left",
+            font=ctk.CTkFont(family="Bahnschrift", size=8, weight="bold"),
             command=self._copy_everything
         ).pack(side="left", padx=3)
 
         self.agent_hud = ctk.CTkFrame(
-            wrapper, fg_color="#1B1E24", corner_radius=12, border_width=1, border_color="#3A4050"
+            wrapper, fg_color="#0B1723", corner_radius=14, border_width=1, border_color="#23577C"
         )
         hud_top = ctk.CTkFrame(self.agent_hud, fg_color="transparent")
-        hud_top.pack(fill="x", padx=11, pady=(8, 2))
+        hud_top.pack(fill="x", padx=12, pady=(9, 2))
         self.agent_hud_title = ctk.CTkLabel(
-            hud_top, text=f"{PUBLIC_NAME} AGENT", text_color="#C6A8FF",
-            font=ctk.CTkFont(family="Tahoma", size=9, weight="bold")
+            hud_top, text=f"{PUBLIC_NAME} // AGENT", text_color="#73D3FF",
+            font=ctk.CTkFont(family="Bahnschrift", size=9, weight="bold")
         )
         self.agent_hud_title.pack(side="left")
         self.agent_stop_button = ctk.CTkButton(
-            hud_top, text="■ PARAR", width=70, height=24, corner_radius=8,
-            fg_color="#4A252A", hover_color="#653138", text_color="#FFB6BD",
-            font=ctk.CTkFont(family="Tahoma", size=8, weight="bold"), command=self._stop_agent_goal
+            hud_top, text="■ PARAR", width=72, height=24, corner_radius=8,
+            fg_color="#351B24", hover_color="#512633", text_color="#FF9DAC",
+            font=ctk.CTkFont(family="Bahnschrift", size=8, weight="bold"),
+            command=self._stop_agent_goal
         )
         self.agent_stop_button.pack(side="right")
         self.agent_hud_step = ctk.CTkLabel(
             self.agent_hud, text="", anchor="w", justify="left", wraplength=760,
-            text_color="#D7DCE4", font=ctk.CTkFont(family="Tahoma", size=10)
+            text_color="#D4E0EC", font=ctk.CTkFont(family="Segoe UI", size=10)
         )
-        self.agent_hud_step.pack(fill="x", padx=11, pady=(0, 5))
+        self.agent_hud_step.pack(fill="x", padx=12, pady=(0, 6))
         self.agent_hud_progress = ctk.CTkProgressBar(
-            self.agent_hud, height=4, corner_radius=2, fg_color="#2B303A", progress_color="#9A74F5"
+            self.agent_hud, height=4, corner_radius=2, fg_color="#162638", progress_color=self.UI_ACCENT
         )
-        self.agent_hud_progress.pack(fill="x", padx=11, pady=(0, 9))
+        self.agent_hud_progress.pack(fill="x", padx=12, pady=(0, 9))
         self.agent_hud_progress.set(0.0)
         self.agent_hud.pack_forget()
 
         self.chat_scroll = ctk.CTkScrollableFrame(
-            wrapper, fg_color="#212121", corner_radius=0, border_width=0,
-            scrollbar_button_color="#4A4A4A", scrollbar_button_hover_color="#5A5A5A"
+            wrapper, fg_color=self.UI_BG, corner_radius=0, border_width=0,
+            scrollbar_button_color="#1A2A3C", scrollbar_button_hover_color="#284866"
         )
         self.chat_scroll.pack(fill="both", expand=True, pady=(0, 10))
         self.chat_display = None
         self._install_chat_mousewheel()
 
+        # Composer flutuante: a peça mais importante da interface.
         input_shell = ctk.CTkFrame(
-            wrapper, fg_color="#292B31", corner_radius=24, border_width=1, border_color="#3F444E"
+            wrapper, fg_color=self.UI_SURFACE_2, corner_radius=22, border_width=1,
+            border_color=self.UI_BORDER_STRONG
         )
         self.input_shell = input_shell
-        input_shell.pack(fill="x", padx=14, pady=(2, 0))
+        input_shell.pack(fill="x", padx=14, pady=(2, 4))
 
         self.quick_menu_button = ctk.CTkButton(
-            input_shell, text="", image=self._get_ui_icon("dots", 18, "#D8DCE7"), width=40, height=40, corner_radius=20,
-            fg_color="#393C45", hover_color="#4B5060", text_color="#D8DCE7",
+            input_shell, text="", image=self._get_ui_icon("dots", 18, "#B7C6D9"),
+            width=40, height=40, corner_radius=14, fg_color="#16263A",
+            border_width=1, border_color="#213A55", hover_color="#203750",
+            text_color="#B7C6D9",
             command=lambda: self._show_quick_actions_menu(self.quick_menu_button)
         )
-        self.quick_menu_button.pack(side="left", padx=(8, 4), pady=6)
+        self.quick_menu_button.pack(side="left", padx=(8, 4), pady=7)
 
-        # Build 16: composer multilinha. Enter envia; Shift+Enter cria nova linha.
-        # O bind fica somente no campo de mensagem, então Enter em busca/dialogos
-        # nunca envia uma mensagem acidentalmente.
         self.text_input = ctk.CTkTextbox(
             input_shell, height=self.COMPOSER_MIN_HEIGHT, wrap="word", activate_scrollbars=False,
-            font=ctk.CTkFont(family="Tahoma", size=13, weight="normal"), text_color="#FAFAFB",
-            fg_color="transparent", border_width=0, corner_radius=0
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="normal"),
+            text_color=self.UI_TEXT, fg_color="transparent", border_width=0, corner_radius=0
         )
-        self.text_input.pack(side="left", fill="x", expand=True, padx=(8, 8), pady=6)
+        self.text_input.pack(side="left", fill="x", expand=True, padx=(8, 8), pady=7)
         self.text_input.bind("<FocusIn>", self._composer_focus_in, add="+")
         self.text_input.bind("<FocusOut>", self._composer_focus_out, add="+")
         self.text_input.bind("<Return>", self._on_composer_return, add="+")
         self.text_input.bind("<KeyRelease>", self._resize_composer, add="+")
         self._composer_set_placeholder()
+
         self.voice_button = ctk.CTkButton(
-            input_shell, text="", image=self._get_ui_icon("voice", 18, "#D8DCE7"), width=40, height=40, corner_radius=20,
-            fg_color="#393C45", hover_color="#4B5060",
-            text_color="#D8DCE7", command=self._toggle_voice_visual_mode
+            input_shell, text="", image=self._get_ui_icon("voice", 18, "#C4E8FF"),
+            width=40, height=40, corner_radius=14, fg_color="#102D43",
+            border_width=1, border_color="#1E5475", hover_color="#17405E",
+            text_color="#C4E8FF", command=self._toggle_voice_visual_mode
         )
-        self.voice_button.pack(side="left", padx=4, pady=6)
+        self.voice_button.pack(side="left", padx=4, pady=7)
         self.send_button = ctk.CTkButton(
-            input_shell, text="", image=self._get_ui_icon("send", 18, "#17181C"), width=40, height=40, corner_radius=20,
-            fg_color="#F4F5F7", hover_color="#DDE1E8",
-            text_color="#17181C", command=self.send_message
+            input_shell, text="", image=self._get_ui_icon("send", 18, "#03131E"),
+            width=42, height=42, corner_radius=14, fg_color=self.UI_ACCENT,
+            hover_color=self.UI_ACCENT_HOVER, text_color="#03131E",
+            command=self.send_message
         )
         self.send_button.pack(side="left", padx=(4, 8), pady=6)
 
     def _create_system_monitor(self, parent):
-        """Barra lateral 13.10.1: compacta, tipografica e com contraste reforcado."""
+        """Command Center: histórico + telemetria num painel único e silencioso."""
         side = ctk.CTkFrame(parent, fg_color="transparent")
-        side.pack(fill="both", expand=True, padx=8, pady=9)
+        side.pack(fill="both", expand=True, padx=9, pady=10)
 
-        brand = ctk.CTkFrame(side, fg_color="transparent")
-        brand.pack(fill="x", pady=(0, 8))
-        # 13.10.1: sem emblema visual; marca tipografica limpa e mais legivel.
+        brand_card = ctk.CTkFrame(
+            side, fg_color=self.UI_SURFACE_2, corner_radius=14, border_width=1, border_color=self.UI_BORDER
+        )
+        brand_card.pack(fill="x", pady=(0, 9))
+        side_logo = self._get_brand_icon(28)
+        if side_logo is not None:
+            ctk.CTkLabel(brand_card, text="", image=side_logo, width=32, height=32).pack(
+                side="left", padx=(9, 7), pady=8
+            )
+        brand_text = ctk.CTkFrame(brand_card, fg_color="transparent")
+        brand_text.pack(side="left", fill="y", pady=7)
         ctk.CTkLabel(
-            brand, text="JARVIS", text_color="#F4F6FA",
-            font=ctk.CTkFont(family="Bahnschrift", size=11, weight="bold")
-        ).pack(side="left", padx=(1, 0))
+            brand_text, text="COMMAND CENTER", text_color=self.UI_TEXT,
+            font=ctk.CTkFont(family="Bahnschrift", size=9, weight="bold")
+        ).pack(anchor="w")
         ctk.CTkLabel(
-            brand, text=JARVIS_VERSION.upper(), text_color="#69717E",
+            brand_text, text=f"CORE {JARVIS_VERSION}  •  STABLE", text_color=self.UI_MUTED_2,
             font=ctk.CTkFont(family="Consolas", size=7)
-        ).pack(side="left", padx=(5, 0), pady=(2, 0))
+        ).pack(anchor="w", pady=(1, 0))
 
         actions = ctk.CTkFrame(side, fg_color="transparent")
-        actions.pack(fill="x", pady=(0, 8))
+        actions.pack(fill="x", pady=(0, 7))
+        ctk.CTkLabel(
+            actions, text="CONVERSAS", text_color="#8FA0B5",
+            font=ctk.CTkFont(family="Consolas", size=7, weight="bold")
+        ).pack(side="left", padx=(3, 5))
         self._conversation_search_button = ctk.CTkButton(
-            actions, text="", image=self._get_ui_icon("search", 17, "#D4D7DD"), width=36, height=34, corner_radius=10,
-            fg_color="transparent", hover_color="#292B30", text_color="#D4D7DD",
+            actions, text="", image=self._get_ui_icon("search", 16, "#B8C6D7"),
+            width=34, height=32, corner_radius=10, fg_color="transparent",
+            hover_color=self.UI_SURFACE_3, text_color="#B8C6D7",
             command=lambda: self._open_conversation_search_popover(self._conversation_search_button)
         )
-        self._conversation_search_button.pack(side="left", padx=(0, 4))
+        self._conversation_search_button.pack(side="right", padx=(3, 0))
         self._new_chat_button = ctk.CTkButton(
-            actions, text="", image=self._get_ui_icon("new_chat", 17, "#D4D7DD"), width=36, height=34, corner_radius=10,
-            fg_color="transparent", hover_color="#292B30", text_color="#D4D7DD",
-            command=self._new_conversation
+            actions, text="", image=self._get_ui_icon("new_chat", 16, "#B8C6D7"),
+            width=34, height=32, corner_radius=10, fg_color="transparent",
+            hover_color=self.UI_SURFACE_3, text_color="#B8C6D7", command=self._new_conversation
         )
-        self._new_chat_button.pack(side="left", padx=4)
-        ctk.CTkLabel(
-            actions, text="Conversas", text_color="#AAB0BA",
-            font=ctk.CTkFont(family="Bahnschrift", size=9, weight="bold")
-        ).pack(side="right", padx=(4, 3))
+        self._new_chat_button.pack(side="right", padx=3)
 
         self.conversation_list_frame = ctk.CTkScrollableFrame(
             side, height=295, fg_color="transparent", corner_radius=0, border_width=0,
-            scrollbar_button_color="#34363B", scrollbar_button_hover_color="#44474E"
+            scrollbar_button_color="#172638", scrollbar_button_hover_color="#24435E"
         )
         self.conversation_list_frame.pack(fill="both", expand=True, pady=(0, 8))
-        # Lista historica fora do caminho critico do primeiro frame.
         self.root.after(110, self._refresh_conversation_list)
 
-        separator = ctk.CTkFrame(side, height=1, fg_color="#292B30")
-        separator.pack(fill="x", pady=(1, 8))
+        separator = ctk.CTkFrame(side, height=1, fg_color=self.UI_BORDER)
+        separator.pack(fill="x", pady=(1, 9))
 
         system_head = ctk.CTkFrame(side, fg_color="transparent")
-        system_head.pack(fill="x", pady=(0, 5))
+        system_head.pack(fill="x", pady=(0, 6))
         ctk.CTkLabel(
-            system_head, text="SISTEMA", text_color="#A2A9B4",
-            font=ctk.CTkFont(family="Bahnschrift", size=8, weight="bold")
-        ).pack(side="left")
+            system_head, text="SYSTEM PULSE", text_color="#8FA0B5",
+            font=ctk.CTkFont(family="Consolas", size=7, weight="bold")
+        ).pack(side="left", padx=(3, 0))
         ctk.CTkButton(
-            system_head, text="↗", width=24, height=24, corner_radius=8,
-            fg_color="transparent", hover_color="#292B30", text_color="#8C929C",
+            system_head, text="↗", width=26, height=24, corner_radius=8,
+            fg_color="transparent", hover_color=self.UI_SURFACE_3, text_color="#7FBFEA",
             font=ctk.CTkFont(size=11), command=self._open_diagnostic_panel
         ).pack(side="right")
 
-        gauges = ctk.CTkFrame(side, fg_color="transparent")
-        gauges.pack(fill="x", pady=(0, 6))
-        self.cpu_gauge = CircularMetricGauge(gauges, "CPU", "#5F91FF", size=56)
-        self.ram_gauge = CircularMetricGauge(gauges, "RAM", "#9876FF", size=56)
-        self.network_gauge = CircularMetricGauge(gauges, "REDE", "#45D393", size=56)
+        gauges = ctk.CTkFrame(
+            side, fg_color="#0B1520", corner_radius=13, border_width=1, border_color="#15283A"
+        )
+        gauges.pack(fill="x", pady=(0, 8), ipady=5)
+        self.cpu_gauge = CircularMetricGauge(gauges, "CPU", self.UI_ACCENT, size=56)
+        self.ram_gauge = CircularMetricGauge(gauges, "RAM", self.UI_ACCENT_2, size=56)
+        self.network_gauge = CircularMetricGauge(gauges, "REDE", self.UI_SUCCESS, size=56)
         for gauge in (self.cpu_gauge, self.ram_gauge, self.network_gauge):
-            gauge.pack(side="left", fill="x", expand=True, padx=1)
+            gauge.pack(side="left", fill="x", expand=True, padx=1, pady=3)
 
         self.active_app_label = ctk.CTkLabel(
             side, text="Ativo  •  --", anchor="w", justify="left",
-            font=ctk.CTkFont(family="Tahoma", size=8, weight="normal"), text_color="#9CA4AF"
+            font=ctk.CTkFont(family="Segoe UI", size=8), text_color="#93A2B4"
         )
-        self.active_app_label.pack(fill="x", padx=3, pady=(1, 4))
+        self.active_app_label.pack(fill="x", padx=4, pady=(1, 4))
 
         self.media_value_label = ctk.CTkLabel(
             side, text="♪  Nenhuma mídia ativa", anchor="w", justify="left", wraplength=210,
-            font=ctk.CTkFont(family="Tahoma", size=8, weight="normal"), text_color="#A6ADB8"
+            font=ctk.CTkFont(family="Segoe UI", size=8), text_color="#A0ADBD"
         )
-        self.media_value_label.pack(fill="x", padx=3, pady=(0, 4))
+        self.media_value_label.pack(fill="x", padx=4, pady=(0, 4))
 
-        # Contexto detalhado, autonomia e presença saíram da barra lateral.
-        # Continuam disponíveis pelo painel ⋮ e pelo diagnóstico.
         self.context_app_label = None
         self.context_site_label = None
         self.context_goal_label = None
@@ -3478,18 +3647,18 @@ class JarvisGUI:
         self.autonomy_segment = None
         self.presence_segment = None
 
-        # Mantém o log ativo para o sistema, mas invisível na interface principal.
+        # O log continua coletando tudo, mas a interface principal permanece limpa.
         self.system_log_frame = ctk.CTkFrame(side, fg_color="transparent")
         self.system_log_text = ctk.CTkTextbox(
             self.system_log_frame, height=120, font=ctk.CTkFont(family="Consolas", size=9),
-            text_color="#7EE2A8", fg_color="#080C11", border_width=0, wrap="word"
+            text_color="#7EE2A8", fg_color="#05090F", border_width=0, wrap="word"
         )
         self.system_log_text.pack(fill="both", expand=True)
         self.system_log_text.configure(state="disabled")
         self.monitor_visible = False
 
         ctk.CTkLabel(
-            side, text=f"{JARVIS_BUILD}", text_color="#4F555E",
+            side, text=f"BUILD {JARVIS_BUILD}", text_color="#435165",
             font=ctk.CTkFont(family="Consolas", size=7)
         ).pack(anchor="e", padx=3, pady=(1, 0))
 
@@ -3510,7 +3679,7 @@ class JarvisGUI:
         popup = ctk.CTkToplevel(self.root)
         self._conversation_search_popup = popup
         popup.overrideredirect(True)
-        popup.configure(fg_color="#17191E")
+        popup.configure(fg_color=self.UI_BG)
         try:
             popup.attributes("-topmost", True)
             x = (widget.winfo_rootx() if widget else self.root.winfo_rootx()+18)
@@ -3519,16 +3688,16 @@ class JarvisGUI:
             x, y = 40, 80
         width, height = 290, 58
         popup.geometry(f"{width}x{height}+{int(x)}+{int(y)}")
-        shell = ctk.CTkFrame(popup, fg_color="#1D1F25", corner_radius=13, border_width=1, border_color="#3B3E46")
+        shell = ctk.CTkFrame(popup, fg_color=self.UI_SURFACE, corner_radius=13, border_width=1, border_color=self.UI_BORDER_STRONG)
         shell.pack(fill="both", expand=True, padx=1, pady=1)
         self.history_search_entry = ctk.CTkEntry(
-            shell, height=38, placeholder_text="Buscar conversas", fg_color="#25272D",
-            border_color="#40434B", font=ctk.CTkFont(family="Tahoma", size=11)
+            shell, height=38, placeholder_text="Buscar conversas", fg_color=self.UI_SURFACE_2,
+            border_color=self.UI_BORDER_STRONG, font=ctk.CTkFont(family="Tahoma", size=11)
         )
         self.history_search_entry.pack(side="left", fill="x", expand=True, padx=(8, 4), pady=9)
         go = ctk.CTkButton(
             shell, text="", image=self._get_ui_icon("search", 17, "#E6E8ED"), width=38, height=38, corner_radius=10,
-            fg_color="#343740", hover_color="#454A56", command=self._search_history_ui
+            fg_color="#16334A", hover_color="#214C6C", command=self._search_history_ui
         )
         go.pack(side="left", padx=(0, 8), pady=9)
         self.history_search_entry.bind("<Return>", lambda _e: self._search_history_ui(), add="+")
@@ -3564,20 +3733,20 @@ class JarvisGUI:
                 title = full_title if len(full_title) <= 24 else full_title[:21].rstrip() + "..."
                 active = conversation_id == self.active_conversation_id
                 row = ctk.CTkFrame(
-                    self.conversation_list_frame, fg_color="#292B30" if active else "transparent",
-                    corner_radius=9, border_width=0
+                    self.conversation_list_frame, fg_color="#102238" if active else "transparent",
+                    corner_radius=10, border_width=1 if active else 0, border_color="#1F5277"
                 )
                 row.pack(fill="x", padx=1, pady=1)
                 button = ctk.CTkButton(
                     row, text=title, height=34, anchor="w", corner_radius=8,
-                    fg_color="transparent", hover_color="#2D3036", text_color="#E4E6EB",
+                    fg_color="transparent", hover_color=self.UI_SURFACE_3, text_color="#DCE7F2",
                     font=ctk.CTkFont(family="Tahoma", size=10, weight="normal"),
                     command=lambda cid=conversation_id: self._switch_conversation(cid)
                 )
                 button.pack(side="left", fill="x", expand=True, padx=(2, 0), pady=1)
                 more = ctk.CTkButton(
                     row, text="", image=self._get_ui_icon("dots", 15, "#939AA5"), width=28, height=28, corner_radius=8,
-                    fg_color="transparent", hover_color="#3A3D44", text_color="#939AA5"
+                    fg_color="transparent", hover_color=self.UI_SURFACE_3, text_color="#8394A8"
                 )
                 more.configure(command=lambda cid=conversation_id, t=full_title, w=more: self._show_conversation_actions(cid, t, w))
                 more.pack(side="right", padx=(0, 3), pady=3)
@@ -3589,8 +3758,8 @@ class JarvisGUI:
         try:
             if self.input_shell:
                 self.input_shell.configure(
-                    border_color="#8A78FF" if focused else "#3F444E",
-                    fg_color="#30333B" if focused else "#292B31",
+                    border_color=self.UI_ACCENT if focused else self.UI_BORDER_STRONG,
+                    fg_color="#122033" if focused else self.UI_SURFACE_2,
                 )
         except Exception:
             pass
@@ -3602,7 +3771,7 @@ class JarvisGUI:
             current = self.text_input.get("1.0", "end-1c")
             if current.strip():
                 return
-            self.text_input.configure(state="normal", text_color="#A5ABB5")
+            self.text_input.configure(state="normal", text_color="#78899E")
             self.text_input.delete("1.0", "end")
             self.text_input.insert("1.0", self._composer_placeholder_text)
             self._composer_placeholder_active = True
@@ -3613,7 +3782,7 @@ class JarvisGUI:
         self._set_input_focus(True)
         if self._composer_placeholder_active and self.text_input:
             try:
-                self.text_input.configure(state="normal", text_color="#FAFAFB")
+                self.text_input.configure(state="normal", text_color=self.UI_TEXT)
                 self.text_input.delete("1.0", "end")
                 self._composer_placeholder_active = False
             except Exception:
@@ -3641,7 +3810,7 @@ class JarvisGUI:
         if not self.text_input:
             return
         try:
-            self.text_input.configure(state="normal", text_color="#FAFAFB")
+            self.text_input.configure(state="normal", text_color=self.UI_TEXT)
             self.text_input.delete("1.0", "end")
             self._composer_placeholder_active = False
             self.text_input.configure(height=self.COMPOSER_MIN_HEIGHT)
@@ -3681,8 +3850,8 @@ class JarvisGUI:
     def _popup_dark_menu(self, widget, entries, upward=False):
         """Menu contextual escuro; menus de reticencias podem abrir para cima."""
         menu = tk.Menu(
-            self.root, tearoff=0, bg="#202228", fg="#F1F1F1",
-            activebackground="#3B3F49", activeforeground="#FFFFFF",
+            self.root, tearoff=0, bg="#0B111B", fg="#DCE7F2",
+            activebackground="#17314A", activeforeground="#FFFFFF",
             relief="flat", bd=0, font=("Tahoma", 10)
         )
         item_count = 0
@@ -5479,6 +5648,14 @@ class JarvisGUI:
 
     def _collect_diagnostic_text(self):
         """Diagnóstico completo, incluindo módulos do modo avançado."""
+        # O diagnóstico pode ser aberto enquanto o boot avançado ainda está em
+        # background. Tente carregá-lo aqui também em vez de mentir com um
+        # fallback mínimo baseado apenas na existência dos objetos.
+        if not self.diagnostics_manager:
+            self._ensure_diagnostics_manager()
+        if not self.window_manager:
+            self._ensure_window_manager()
+
         if self.diagnostics_manager:
             try:
                 report = self.diagnostics_manager.run(
@@ -5591,14 +5768,64 @@ class JarvisGUI:
                     "DIAGNOSTIC"
                 )
 
-        # Fallback mínimo.
-        return (
-            f"=== {PUBLIC_NAME} - DIAGNÓSTICO ===\n\n"
-            f"Gemini: {'OK' if self.core and self.core.is_available() else 'ATENÇÃO'}\n"
-            f"Memória: {'OK' if self.memory_store else 'ATENÇÃO'}\n"
-            f"Voz: {'OK' if self.voice_engine else 'ATENÇÃO'}\n"
-            f"Modo: {self.interaction_mode}"
+        # Fallback detalhado e verdadeiro. Mesmo se o módulo avançado falhar,
+        # nunca declare "Voz: OK" só porque existe um objeto VoiceEngine.
+        lines = [
+            f"=== {PUBLIC_NAME} - DIAGNÓSTICO DE CONTINGÊNCIA ===",
+            "",
+            "Diagnóstico avançado: INDISPONÍVEL",
+        ]
+        diag_error = (getattr(self, "_advanced_import_errors", {}) or {}).get(
+            "DiagnosticsManager"
         )
+        if diag_error:
+            lines.append(f"Causa: {diag_error}")
+        try:
+            lines.append(
+                f"Gemini: {'OK' if self.core and self.core.is_available() else 'ATENÇÃO'}"
+            )
+        except Exception as exc:
+            lines.append(f"Gemini: ERRO ({exc})")
+        lines.append(f"Memória: {'OK' if self.memory_store else 'ATENÇÃO'}")
+
+        if self.voice_engine:
+            try:
+                voice = self.voice_engine.status() or {}
+                ready = bool(voice.get("ready"))
+                mic = bool(voice.get("microphone_available"))
+                lines.extend([
+                    f"Voz: {'OK' if ready else 'ATENÇÃO'}",
+                    f"Microfone utilizável: {'SIM' if mic else 'NÃO'}",
+                    f"Entrada: {voice.get('input_device') or '-'}",
+                    f"Host de áudio: {voice.get('input_hostapi') or '-'}",
+                    f"Captura: {voice.get('capture_sample_rate') or '-'} Hz",
+                    f"Tentativas de voz: {voice.get('startup_attempts', 0)}",
+                ])
+                if voice.get("last_error"):
+                    lines.append(f"Último erro de voz: {voice.get('last_error')}")
+            except Exception as exc:
+                lines.append(f"Voz: ERRO ({exc})")
+        else:
+            lines.append("Voz: NÃO CARREGADA")
+
+        try:
+            desktop = self.desktop_integration.status() if self.desktop_integration else {}
+            lines.append(
+                f"Bandeja: {'OK' if desktop.get('tray_ready') else 'ATENÇÃO'}"
+            )
+        except Exception as exc:
+            lines.append(f"Bandeja: ERRO ({exc})")
+
+        window_error = (getattr(self, "_advanced_import_errors", {}) or {}).get(
+            "AdvancedWindows"
+        )
+        lines.append(
+            f"Controle de monitores: {'OK' if self.window_manager else 'INDISPONÍVEL'}"
+        )
+        if window_error:
+            lines.append(f"Erro de monitores: {window_error}")
+        lines.append(f"Modo: {self.interaction_mode}")
+        return "\n".join(lines)
 
     def _open_diagnostic_panel(self):
         """Abre um painel simples com o estado dos principais módulos."""
@@ -6260,6 +6487,28 @@ class JarvisGUI:
                 except Exception: pass
             self.add_message(PUBLIC_NAME, msg, is_jarvis=True)
             outcome.update(message=msg, success=True, verified=True)
+            return outcome
+
+        if command.startswith("v8:play_music:"):
+            query = command.split(":", 2)[2].strip()
+            try:
+                msg = self.actions.play_music(query)
+                ok = not self._v8_text_failed(msg)
+            except Exception as exc:
+                msg, ok = f"Não consegui reproduzir essa música: {exc}", False
+            self.add_message(PUBLIC_NAME, msg, is_jarvis=True)
+            outcome.update(message=msg, success=ok, verified=False)
+            return outcome
+
+        if command.startswith("v8:play_spotify:"):
+            query = command.split(":", 2)[2].strip()
+            try:
+                msg = self.actions.play_spotify(query)
+                ok = not self._v8_text_failed(msg)
+            except Exception as exc:
+                msg, ok = f"Não consegui abrir essa música no Spotify: {exc}", False
+            self.add_message(PUBLIC_NAME, msg, is_jarvis=True)
+            outcome.update(message=msg, success=ok, verified=False)
             return outcome
 
         if command == "v8:media:status":
@@ -7179,8 +7428,25 @@ class JarvisGUI:
             outcome.update(message=msg, success=ok, verified=ok)
             return outcome
 
+        if command == "v8:reload_monitors":
+            ok = self._ensure_window_manager(force=True)
+            if ok:
+                try:
+                    count = len(self.window_manager.get_monitors() or [])
+                except Exception:
+                    count = 0
+                msg = f"✓ Controle de monitores recarregado. Detectei {count} monitor(es)."
+            else:
+                detail = (self._advanced_import_errors or {}).get("AdvancedWindows") or "módulo indisponível"
+                msg = f"Não consegui carregar o controle de monitores: {detail}"
+            self.add_message(PUBLIC_NAME, msg, is_jarvis=True)
+            outcome.update(message=msg, success=ok, verified=ok)
+            return outcome
+
         if command == "v8:monitors":
             try:
+                if not self.window_manager:
+                    self._ensure_window_manager()
                 monitors = self.window_manager.get_monitors() if self.window_manager else []
                 active = self.window_manager.get_active_monitor() if self.window_manager else {}
                 active_index = active.get("index") or active.get("number") or "?"
@@ -7391,8 +7657,9 @@ class JarvisGUI:
             target = command.split(":", 2)[2].strip()
             if not target:
                 msg = "Qual aplicativo ou janela você quer mover?"
-            elif not self.window_manager:
-                msg = "Controle de monitores não carregado."
+            elif not self.window_manager and not self._ensure_window_manager():
+                detail = (self._advanced_import_errors or {}).get("AdvancedWindows")
+                msg = "Controle de monitores não carregado." + (f" ({detail})" if detail else "")
             else:
                 msg = self.window_manager.move_to_other_monitor(target)
             self.add_message(PUBLIC_NAME, msg, is_jarvis=True)
@@ -7405,8 +7672,9 @@ class JarvisGUI:
             command, flags=re.I,
         )
         if m:
-            if not self.window_manager:
-                msg = "Controle de monitores não carregado."
+            if not self.window_manager and not self._ensure_window_manager():
+                detail = (self._advanced_import_errors or {}).get("AdvancedWindows")
+                msg = "Controle de monitores não carregado." + (f" ({detail})" if detail else "")
             else:
                 msg = self.window_manager.move_to_monitor(m.group(1).strip(), int(m.group(2)))
             self.add_message(PUBLIC_NAME, msg, is_jarvis=True)
@@ -9588,53 +9856,61 @@ class JarvisGUI:
     def _create_chat_bubble(
         self, sender, message, is_user=False, is_jarvis=False, is_system=False, timestamp=None, suppress_autoscroll=False
     ):
-        """V6: mensagens clean; resposta do JARVIS sem balão pesado, usuário em pill discreta."""
+        """Mensagens Blue Core: cartão JARVIS leve, usuário compacto e avatar oficial."""
         if not self.chat_scroll:
             return None
-        row = ctk.CTkFrame(self.chat_scroll, fg_color="#212121")
-        row.pack(fill="x", padx=18, pady=8)
+        row = ctk.CTkFrame(self.chat_scroll, fg_color=self.UI_BG)
+        row.pack(fill="x", padx=16, pady=7)
 
         if is_user:
-            bubble_color, border, text_color, anchor_side = "#303030", "#3E3E3E", "#F4F4F4", "right"
-            sender_color = "#BDBDBD"
+            bubble_color, border, text_color = "#12243A", "#24577D", "#F2F7FC"
+            sender_color = "#9DCAE7"
         elif is_system:
-            bubble_color, border, text_color, anchor_side = "#252525", "#353535", "#BDBDBD", "left"
-            sender_color = "#888888"
+            bubble_color, border, text_color = "#0D141E", "#1C2A3A", "#AAB7C7"
+            sender_color = "#718197"
         else:
-            bubble_color, border, text_color, anchor_side = "#212121", "#212121", "#ECECEC", "left"
-            sender_color = "#7AB7FF"
+            bubble_color, border, text_color = "#0A111B", "#15283A", "#E7EEF6"
+            sender_color = self.UI_ACCENT
 
-        bubble = ctk.CTkFrame(row, fg_color=bubble_color, corner_radius=14 if is_user else 0, border_width=1 if is_user or is_system else 0, border_color=border)
+        bubble = ctk.CTkFrame(
+            row, fg_color=bubble_color, corner_radius=15, border_width=1, border_color=border
+        )
         if is_user:
-            bubble.pack(side="right", padx=(70, 4), ipadx=2, ipady=1)
+            bubble.pack(side="right", padx=(90, 4), ipadx=2, ipady=1)
         else:
-            bubble.pack(fill="x", padx=(4, 34), ipadx=2, ipady=1)
+            bubble.pack(fill="x", padx=(4, 44), ipadx=2, ipady=1)
 
         meta_row = ctk.CTkFrame(bubble, fg_color="transparent")
-        meta_row.pack(fill="x", padx=12, pady=(7, 1))
+        meta_row.pack(fill="x", padx=12, pady=(8, 1))
         display_sender = PUBLIC_NAME if is_jarvis else sender
+
+        if is_jarvis and not is_user:
+            avatar = self._get_brand_icon(20)
+            if avatar is not None:
+                ctk.CTkLabel(
+                    meta_row, text="", image=avatar, width=22, height=22, fg_color="transparent"
+                ).pack(side="left", padx=(0, 7))
+
         ctk.CTkLabel(
             meta_row, text=("VOCÊ" if is_user else str(display_sender).upper()),
-            font=ctk.CTkFont(family="Tahoma", size=9, weight="bold"), text_color=sender_color
+            font=ctk.CTkFont(family="Bahnschrift", size=8, weight="bold"), text_color=sender_color
         ).pack(side="left")
         ctk.CTkLabel(
             meta_row, text=self._format_message_time(timestamp),
-            font=ctk.CTkFont(family="Consolas", size=8), text_color="#888E98"
+            font=ctk.CTkFont(family="Consolas", size=8), text_color="#607086"
         ).pack(side="right", padx=(12, 0))
 
         initial_text = message or ""
         textbox_height = self._estimate_chat_textbox_height(initial_text)
         msg_label = ctk.CTkTextbox(
             bubble, width=420, height=textbox_height, wrap="word", activate_scrollbars=False,
-            font=ctk.CTkFont(family="Tahoma", size=13), text_color=text_color,
+            font=ctk.CTkFont(family="Segoe UI", size=13), text_color=text_color,
             fg_color="transparent", border_width=0, corner_radius=0
         )
-        msg_label.pack(fill="x", expand=True, padx=8, pady=(0, 8))
+        msg_label.pack(fill="x", expand=True, padx=9, pady=(1, 9))
         msg_label.insert("1.0", initial_text)
         msg_label.configure(state="disabled")
 
-        # Cada bolha e seus filhos interceptam o wheel antes do bind_all interno
-        # do CustomTkinter. Assim o evento e processado exatamente uma vez.
         self._bind_chat_mousewheel_tree(row)
         msg_label.bind("<Control-c>", lambda event, widget=msg_label: self._copy_text_selection(widget))
         msg_label.bind("<Control-C>", lambda event, widget=msg_label: self._copy_text_selection(widget))

@@ -690,6 +690,10 @@ class VoiceEngine:
         self._current_tts_text = ""
         self._input_device_index = None
         self._capture_sample_rate = self.SAMPLE_RATE
+        self._input_hostapi = ""
+        self._input_candidate_count = 0
+        self._input_candidate_pos = 0
+        self._auto_recovery_suspended = False
         self._audio_ring = None
         self._capture_mode = "stable-direct-16k"
         self._last_direct_frame_at = 0.0
@@ -1057,6 +1061,11 @@ class VoiceEngine:
             "transcript_mode": "full-utterance+semantic-fastlane",
             "capture_mode": self._capture_mode,
             "capture_sample_rate": int(getattr(self, "_capture_sample_rate", self.SAMPLE_RATE) or self.SAMPLE_RATE),
+            "input_device_index": self._input_device_index,
+            "input_hostapi": str(getattr(self, "_input_hostapi", "") or ""),
+            "input_candidate_count": int(getattr(self, "_input_candidate_count", 0) or 0),
+            "input_candidate_pos": int(getattr(self, "_input_candidate_pos", 0) or 0),
+            "auto_recovery_suspended": bool(getattr(self, "_auto_recovery_suspended", False)),
             "wake_thread_alive": bool(self._wake_thread and self._wake_thread.is_alive()),
             "startup_attempts": int(self._startup_attempts),
             "supervisor_restarts": int(self._supervisor_restarts),
@@ -1097,8 +1106,9 @@ class VoiceEngine:
         ).start()
 
     def _voice_supervisor_loop(self):
-        """Mantem o wake word vivo sem criar loops agressivos de reconexao."""
-        delay = 0.75
+        """Mantém o wake vivo sem martelar um dispositivo ausente/incompatível."""
+        transient_delay = 0.75
+        no_mic_cycles = 0
         while not self._stop_event.is_set():
             self._startup_attempts += 1
             self._ready_event.clear()
@@ -1111,14 +1121,34 @@ class VoiceEngine:
             self._ready_event.clear()
             self._supervisor_restarts += 1
             detail = str(self.last_error or "Entrada de audio indisponivel").strip()
-            self._state("RECONECTANDO", detail[:180])
-            self._log(
-                "warning",
-                f"Motor de voz sera reaberto em {delay:.2f}s (tentativa {self._startup_attempts}).",
-            )
-            if self._stop_event.wait(delay):
+            no_usable_mic = not bool(self._mic_available)
+
+            if no_usable_mic:
+                no_mic_cycles += 1
+                self._auto_recovery_suspended = True
+                wait_s = 30.0
+                self._state("SEM_MICROFONE", detail[:180])
+                # Uma linha a cada ciclo já é suficiente; antes eram várias a
+                # cada 5 s e o log escondia os outros erros do aplicativo.
+                self._log(
+                    "warning",
+                    f"Voz sem entrada utilizável; nova detecção em {int(wait_s)}s "
+                    f"(tentativa {self._startup_attempts}).",
+                )
+            else:
+                no_mic_cycles = 0
+                self._auto_recovery_suspended = False
+                wait_s = transient_delay
+                self._state("RECONECTANDO", detail[:180])
+                self._log(
+                    "warning",
+                    f"Motor de voz será reaberto em {wait_s:.2f}s "
+                    f"(tentativa {self._startup_attempts}).",
+                )
+                transient_delay = min(5.0, transient_delay * 1.65)
+
+            if self._stop_event.wait(wait_s):
                 return
-            delay = min(5.0, delay * 1.65)
 
     def wait_until_ready(self, timeout: float = 0.0) -> bool:
         if self._ready:
@@ -1376,56 +1406,92 @@ class VoiceEngine:
             pass
 
     def _detect_microphone(self):
-        """Seleciona uma entrada utilizável e uma taxa de captura compatível.
+        """Seleciona uma entrada que consiga abrir o stream usado de verdade.
 
-        Primeiro tentamos 16 kHz nativos. Se o driver/host API do Windows
-        recusar, testamos a taxa padrão real do dispositivo e 48/44,1 kHz.
-        O stream é reamostrado para 16 kHz por ``_StableDirectStream`` antes
-        de chegar ao Vosk/WebRTC VAD.
+        ``check_input_settings`` sozinho não garante que o backend aceite a API
+        bloqueante usada pelo JARVIS. Em especial, WDM-KS pode anunciar o
+        formato e depois falhar com ``Blocking API not supported yet``. Por isso
+        cada candidato recebe um score de dispositivo/host API e é sondado com
+        um ``RawInputStream`` real antes de ser declarado disponível.
         """
         self._mic_available = False
         self._input_device_index = None
         self._capture_sample_rate = self.SAMPLE_RATE
+        self._input_hostapi = ""
+        self._input_candidate_count = 0
+        self._input_candidate_pos = 0
+        self.input_device_name = ""
+        self._capture_mode = "no-usable-input"
+
         try:
             devices = list(self._sd.query_devices())
         except Exception as exc:
             self.last_error = f"PortAudio não conseguiu listar entradas: {exc}"
             self._log("warning", self.last_error)
             return
+        try:
+            hostapis = list(self._sd.query_hostapis())
+        except Exception:
+            hostapis = []
 
-        candidates = []
         try:
             default_input = int(self._sd.default.device[0])
         except Exception:
             default_input = -1
 
-        if 0 <= default_input < len(devices):
-            candidates.append(default_input)
+        def host_name(device):
+            try:
+                idx = int(device.get("hostapi", -1))
+                if 0 <= idx < len(hostapis):
+                    return str(hostapis[idx].get("name") or "")
+            except Exception:
+                pass
+            return ""
 
-        others = []
+        candidates = []
+        good_words = ("microphone", "microfone", "mic ", "headset", "headphone", "usb", "webcam")
+        poor_words = (
+            "audio cd", "áudio cd", "cd input", "entrada de cd",
+            "stereo mix", "mixagem estereo", "mixagem estéreo",
+            "what u hear", "loopback", "wave out",
+        )
         for index, device in enumerate(devices):
             try:
                 channels = int(device.get("max_input_channels", 0))
             except Exception:
                 channels = 0
-            if channels < 1 or index in candidates:
+            if channels < 1:
                 continue
-            name = str(device.get("name", "") or "").lower()
-            preference = 0
-            if any(key in name for key in ("microphone", "microfone", "mic ", "headset", "usb")):
-                preference -= 10
-            others.append((preference, index))
-        candidates.extend(index for _, index in sorted(others))
+            name = str(device.get("name", "") or "")
+            name_key = self._normalize(name)
+            host = host_name(device)
+            host_key = self._normalize(host)
+            score = 0
+            if index == default_input:
+                score += 24
+            if any(self._normalize(word) in name_key for word in good_words):
+                score += 70
+            if any(self._normalize(word) in name_key for word in poor_words):
+                score -= 110
+            if "wasapi" in host_key:
+                score += 45
+            elif "mme" in host_key:
+                score += 32
+            elif "directsound" in host_key or "direct sound" in host_key:
+                score += 28
+            elif "wdm-ks" in host_key or "wdm ks" in host_key:
+                score -= 75
+            candidates.append((score, index, device, host))
 
+        candidates.sort(key=lambda row: (-row[0], row[1]))
+        self._input_candidate_count = len(candidates)
         if not candidates:
             self.last_error = "Nenhum dispositivo de entrada de áudio foi encontrado."
             self._log("warning", self.last_error)
             return
 
-        first_error = ""
-        tried = []
-        for index in candidates:
-            device = devices[index]
+        errors = []
+        for position, (_, index, device, host) in enumerate(candidates):
             rates = [self.SAMPLE_RATE]
             try:
                 native = int(round(float(device.get("default_samplerate") or 0)))
@@ -1438,48 +1504,52 @@ class VoiceEngine:
             for rate in rates:
                 try:
                     self._sd.check_input_settings(
-                        device=index,
-                        channels=self.CHANNELS,
-                        dtype="int16",
-                        samplerate=rate,
+                        device=index, channels=self.CHANNELS, dtype="int16", samplerate=rate,
                     )
+                    source_frames = max(1, int(round(320 * rate / self.SAMPLE_RATE)))
+                    # Abertura real no mesmo modo usado pelo wake word.
+                    with self._sd.RawInputStream(
+                        samplerate=rate, blocksize=source_frames, dtype="int16",
+                        channels=self.CHANNELS, device=index,
+                    ):
+                        pass
                 except Exception as exc:
-                    tried.append(f"#{index}@{rate}: {exc}")
-                    if not first_error:
-                        first_error = str(exc)
+                    errors.append(f"#{index}@{rate}/{host or '?'}: {exc}")
                     continue
 
                 self._input_device_index = int(index)
                 self._capture_sample_rate = int(rate)
+                self._input_hostapi = str(host or "desconhecido")
+                self._input_candidate_pos = int(position)
                 self.input_device_name = str(device.get("name", "") or f"Entrada {index}")
                 self._load_mic_profile()
                 self._mic_available = True
+                self._auto_recovery_suspended = False
                 self.last_error = ""
+                self._capture_mode = (
+                    "stable-direct-16k" if rate == self.SAMPLE_RATE
+                    else f"stable-direct-{rate}-to-{self.SAMPLE_RATE}"
+                )
                 if rate != self.SAMPLE_RATE:
-                    self._capture_mode = f"stable-direct-{rate}-to-{self.SAMPLE_RATE}"
                     self._log(
                         "warning",
-                        f"Microfone '{self.input_device_name}' não abriu em {self.SAMPLE_RATE} Hz; "
-                        f"capturando em {rate} Hz com reamostragem interna.",
+                        f"Microfone '{self.input_device_name}' usando {rate} Hz com reamostragem interna "
+                        f"(host {self._input_hostapi}).",
                     )
                 else:
-                    self._capture_mode = "stable-direct-16k"
-                if index != default_input:
                     self._log(
-                        "warning",
-                        f"Microfone padrão indisponível; usando entrada compatível: "
-                        f"{self.input_device_name} (#{index}, {rate} Hz).",
+                        "info",
+                        f"Microfone selecionado: {self.input_device_name} "
+                        f"(#{index}, {rate} Hz, {self._input_hostapi}).",
                     )
-                else:
-                    self._log("info", f"Microfone selecionado: {self.input_device_name} (#{index}, {rate} Hz).")
                 return
 
-        detail = first_error or "formato de captura recusado pelo driver"
-        if len(tried) > 4:
-            detail += f"; {len(tried)} combinações foram testadas"
+        tail = errors[0] if errors else "nenhum stream bloqueante pôde ser aberto"
+        self._auto_recovery_suspended = True
         self.last_error = (
-            "Há dispositivo de entrada, mas nenhuma taxa de captura compatível pôde ser aberta: "
-            + detail
+            "Nenhuma entrada de microfone utilizável pôde ser aberta. "
+            "Conecte/ative um microfone ou headset; o JARVIS verificará novamente. "
+            f"Detalhe: {tail}"
         )
         self._log("warning", self.last_error)
 
@@ -2282,6 +2352,8 @@ class VoiceEngine:
                 if self._direct_open_failures >= 3:
                     self._ready = False
                     self._ready_event.clear()
+                    self._mic_available = False
+                    self._auto_recovery_suspended = True
                     self._state("ERRO", "Microfone parou de entregar áudio")
                     self._log(
                         "error",

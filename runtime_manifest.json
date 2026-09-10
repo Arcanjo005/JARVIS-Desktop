@@ -1,0 +1,257 @@
+{
+  "format": 1,
+  "runtime_api": 1,
+  "version": "1.1.3",
+  "minimum_bootstrap": "1.1.0",
+  "repository": "Arcanjo005/JARVIS-Desktop",
+  "created_at": "2026-09-10T13:53:41Z",
+  "file_count": 49,
+  "uncompressed_bytes": 1830081,
+  "files": [
+    {
+      "path": "action_verifier.py",
+      "size": 7873,
+      "sha256": "135735983bea865a9cc5cae1f28d5d322f5d0ecc4a1aee2d270ac8c11ea42982"
+    },
+    {
+      "path": "actions.py",
+      "size": 177095,
+      "sha256": "f2c8f10bde792ee538861aeab6a7e9988e4a5c29627750f46482bfa0863790eb"
+    },
+    {
+      "path": "advanced_windows.py",
+      "size": 38617,
+      "sha256": "a6247e372b65c40b1ee211ae0b42d4c3958fc5043f1f4f928f532ec9b272310b"
+    },
+    {
+      "path": "audio_device_manager.py",
+      "size": 9574,
+      "sha256": "b722a1ecdde89e48f78545b743fd71cf7cb314af1b468573a03bdcc98ac33911"
+    },
+    {
+      "path": "autonomy_policy.py",
+      "size": 4107,
+      "sha256": "dd4d0e8a18ad4de428cede028faf86e12891e23e44cb68dd842a2d5594dce33c"
+    },
+    {
+      "path": "behavior_memory.py",
+      "size": 12358,
+      "sha256": "bf2f9ee11b08e01798c6f2f692a754c394bb024413be82944f5996adbe650985"
+    },
+    {
+      "path": "browser_autonomy.py",
+      "size": 38353,
+      "sha256": "55776449b9f8cebb0b0189477c86265ee77de36b1bb2d3e7d0e9aa73d5f18934"
+    },
+    {
+      "path": "conditional_rules.py",
+      "size": 11816,
+      "sha256": "45b91b3edaaa4191f0b16de82d913ec86ffc5c5363f8de894d91e3d71b273fe8"
+    },
+    {
+      "path": "config.py",
+      "size": 8529,
+      "sha256": "0c9c645903dc8c23fb312ee8c37c59262e13018b4ff086d7b520e72625d63fd5"
+    },
+    {
+      "path": "context_engine.py",
+      "size": 17309,
+      "sha256": "06e74beb7fdab9a24543acc2b746d045f2b1b4e4094222f6bcb6d4177d890921"
+    },
+    {
+      "path": "core.py",
+      "size": 54802,
+      "sha256": "64c7a3df419c2ab174bb7ee94a7e19c3443ae8446daa74f8c987e15a1308addd"
+    },
+    {
+      "path": "deepgram_flux.py",
+      "size": 22696,
+      "sha256": "ece2de8191ea1fb2d86313ba758083519d412dd1f2b937c90854bc6d1ef16d15"
+    },
+    {
+      "path": "desktop_integration.py",
+      "size": 19020,
+      "sha256": "fa3efa18cf10033214ef87b168a093b6e014601625f20e49b61f4b2907466dae"
+    },
+    {
+      "path": "diagnostics_manager.py",
+      "size": 26311,
+      "sha256": "5bee0a61ffb935d579c06ffe2e9e403044c914f7106620df1d847adc19e7a50a"
+    },
+    {
+      "path": "experience_engine.py",
+      "size": 20734,
+      "sha256": "d2f66317e2b124f4df546b655df05424bdb5b25719427f054fd5f3a52fac756f"
+    },
+    {
+      "path": "first_run_setup.py",
+      "size": 7188,
+      "sha256": "fe76c4a84a93b93699d73bdcf1a1c21e63e2c0ac2c57668c0da6dfebf36964f0"
+    },
+    {
+      "path": "github_updater.py",
+      "size": 15783,
+      "sha256": "41a6685738034178c4529c6b1a993a3075fc10f36b1a2032e42e7b6765babfc9"
+    },
+    {
+      "path": "goal_executor.py",
+      "size": 26609,
+      "sha256": "2c6b0935ec3a5a354d9e23513b1cc7831d321784361f0e5a7590507f4ca21470"
+    },
+    {
+      "path": "gui.py",
+      "size": 511013,
+      "sha256": "3abe123f558539290202ea238cc59bc54b3ec165b8c60d13ee36b8336d73cdbb"
+    },
+    {
+      "path": "hardware_profile.py",
+      "size": 5950,
+      "sha256": "3486a20bf9ed54843cd21463fae8e81f65eda3190d7702765206f82e6e30f463"
+    },
+    {
+      "path": "intent_parser.py",
+      "size": 26277,
+      "sha256": "140b91d25a2230a92e57f46f42a4f42272426b2a0e7816fc486e679c3b26d2fa"
+    },
+    {
+      "path": "jarvis_cleanup.py",
+      "size": 11860,
+      "sha256": "2aa5d544d39243a4f0ce49bbdff8bdafac0ac8d59cd7a1435e65ad9f9119493e"
+    },
+    {
+      "path": "jarvis_identity.py",
+      "size": 2184,
+      "sha256": "a1209089835de9a5482661a8c42c45afa49979b27af782e0edc958007b666abd"
+    },
+    {
+      "path": "jarvis_plugins.py",
+      "size": 1786,
+      "sha256": "c529e594f3df5a104693a645cf255eff74c000e2c27efc633c1d9346a0248f37"
+    },
+    {
+      "path": "jarvis_reliability.py",
+      "size": 3644,
+      "sha256": "6f33b24273b9c3eabf8c71d0aa292438a0a33e881391aac4bb7c2c5f2e8255ba"
+    },
+    {
+      "path": "jarvis_router.py",
+      "size": 113965,
+      "sha256": "31959dd5d379bea7c0d25905a13b5d32670e496a6335a62d55bb159df0f1f8b3"
+    },
+    {
+      "path": "jarvis_runtime.py",
+      "size": 2113,
+      "sha256": "f589f78e817abc48ff6751352e44e15e808a36debb520b675137335a1768ecb8"
+    },
+    {
+      "path": "jarvis_state.py",
+      "size": 5343,
+      "sha256": "f61c12b016e1116cf16b9188b45e32dced55b2acd635ff5e34dc097cb80d8227"
+    },
+    {
+      "path": "jarvis_version.py",
+      "size": 407,
+      "sha256": "02c93f26a27f590044f7db5671ac550eafaba4b2d7e46137470d0fcb073998f2"
+    },
+    {
+      "path": "logger.py",
+      "size": 7512,
+      "sha256": "d00d4aa825d7d1acf04565ea5f7be26668ad17c6881f23b65027bd16bbcd6512"
+    },
+    {
+      "path": "media_context.py",
+      "size": 12614,
+      "sha256": "56ad1e6d9ebecc2159d4aa6b7c6117282ab47447e918e06f878071c8d9ccea79"
+    },
+    {
+      "path": "memory_store.py",
+      "size": 42168,
+      "sha256": "48601b3bbeea5033851ceb32fd72f3cf4e1cef175eb756f7dee3dd0e3e69032e"
+    },
+    {
+      "path": "multi_language_generator.py",
+      "size": 24964,
+      "sha256": "83e43c1125cf3b252cd6261c14a082cbd6f3df2ca722d894817081e73c0a5a6a"
+    },
+    {
+      "path": "observer_engine.py",
+      "size": 7520,
+      "sha256": "e865302c77bdc39f9e01c265a4988546074422edb77fb4cef11a94b26c8eb75d"
+    },
+    {
+      "path": "operational_context.py",
+      "size": 15226,
+      "sha256": "a82d731c464edb9dad08fbd454fa35819e67502f03f2e36651f911eecd50ef41"
+    },
+    {
+      "path": "performance_tracer.py",
+      "size": 6712,
+      "sha256": "8c231376a6202cf412ea406e97e8d8118d99beeddedaba7842626a3d7e5b6ae0"
+    },
+    {
+      "path": "safety_manager.py",
+      "size": 8695,
+      "sha256": "894ee6712b991770cbfb383d75abc7f62cef398c3f58226fd49718191e081deb"
+    },
+    {
+      "path": "secure_settings.py",
+      "size": 7316,
+      "sha256": "bb436ec7f03ac4890adeb523efdddb91bf06bdec49ec4da0338c5b0aaaa8f0c6"
+    },
+    {
+      "path": "semantic_language.py",
+      "size": 41178,
+      "sha256": "27d59ef96d69ae6801ff8116343626b6f1371a2c6cc0a3eb3c522e9a2cfeb35a"
+    },
+    {
+      "path": "speaker_guard.py",
+      "size": 8673,
+      "sha256": "01173cd99b81b69148580b3d82866965c3b4933bba6753fe4600cc383ebc92ed"
+    },
+    {
+      "path": "text_sanitizer.py",
+      "size": 4141,
+      "sha256": "6bb082376ebf8e825d754663716e827c350c8de643bef8e7b46355f8153144df"
+    },
+    {
+      "path": "universal_app_resolver.py",
+      "size": 69521,
+      "sha256": "19a1650ff58b1d63e395e99fd51239deeb1c50c5a540dd092084baa2ab96427d"
+    },
+    {
+      "path": "vad_engine.py",
+      "size": 5004,
+      "sha256": "5780cc62d12eed5bb4e7ab20d54b3a34a85ecd8e9ab8d29e2ec2a7ecc666727b"
+    },
+    {
+      "path": "vision_system.py",
+      "size": 13645,
+      "sha256": "29145db34e68dafa9429edbdd64ccecc11dc6eb076a1ebef5ad83931eacd47dc"
+    },
+    {
+      "path": "voice_engine.py",
+      "size": 275680,
+      "sha256": "ec4ad019ac3fbaf2e7550331775db77c8fb9eeafe92975c66178c030e35d3c4d"
+    },
+    {
+      "path": "voice_overlay_qt.py",
+      "size": 41888,
+      "sha256": "3e65ebdcd1197a8d18fcecf775a6b5bf1db114969581d3ae954253d26e8ca55e"
+    },
+    {
+      "path": "vulkan_whisper.py",
+      "size": 6865,
+      "sha256": "a09984e6d5e4867f2526204c7d6a2ca03dd54756694146ccad42c70f17f55532"
+    },
+    {
+      "path": "web_search.py",
+      "size": 20354,
+      "sha256": "2416890602778142700372467517a7460551165869ad9c6c0f501560bc7c54c7"
+    },
+    {
+      "path": "workflow_engine.py",
+      "size": 7089,
+      "sha256": "4887b6997660051f17e731c4ccc1f94c236ab9995f74a15aa4e3724bab51c470"
+    }
+  ]
+}

@@ -653,6 +653,38 @@ class V8Router:
         }:
             return _make_route("local", ["v8:voice_restart"], "VOICE_RESTART")
 
+        # Operações de recuperação de monitor são comandos internos, não nomes
+        # de aplicativos para o Universal App Resolver.
+        if re.fullmatch(
+            r"(?:carrega|carregue|carregar|recarrega|recarregue|recarregar|ativa|ative|ativar)\s+"
+            r"(?:o\s+)?(?:controle\s+de\s+)?(?:monitores|monitor|telas|tela)",
+            key, re.I,
+        ):
+            return _make_route("local", ["v8:reload_monitors"], "RELOAD_MONITORS")
+
+        # Pedir uma música pelo nome precisa ganhar de qualquer leitura de
+        # "coloca" como mover janela. Também aceita o turno curto "música X".
+        m_music_spotify = re.match(
+            r"^(?:toca|toque|tocar|coloca|coloque|colocar|bota|bote|botar|reproduz|reproduza|reproduzir)\s+"
+            r"(?:a\s+|uma\s+)?(?:musica|música|faixa|som)\s+(.+?)\s+(?:no|na)\s+spotify\s*$",
+            cleaned, re.I,
+        )
+        if m_music_spotify:
+            query = _clean_target(m_music_spotify.group(1))
+            return _make_route("local", [f"v8:play_spotify:{query}"], "PLAY_MUSIC")
+
+        m_music = re.match(
+            r"^(?:toca|toque|tocar|coloca|coloque|colocar|bota|bote|botar|reproduz|reproduza|reproduzir)\s+"
+            r"(?:a\s+|uma\s+)?(?:musica|música|faixa|som)\s+(.+)$",
+            cleaned, re.I,
+        )
+        if not m_music:
+            m_music = re.match(r"^(?:musica|música)\s+(.+)$", cleaned, re.I)
+        if m_music:
+            query = _clean_target(m_music.group(1))
+            if query:
+                return _make_route("local", [f"v8:play_music:{query}"], "PLAY_MUSIC")
+
         if key in {"microfone muito sensivel", "microfone muito sensível", "modo microfone muito sensivel", "modo microfone muito sensível", "me ouve bem mais baixo"}:
             return _make_route("local", ["v8:mic_sensitivity:1.28"], "MIC_SENSITIVITY")
         if key in {"microfone sensivel", "microfone sensível", "modo microfone sensivel", "modo microfone sensível", "me ouve mais baixo"}:
@@ -1493,6 +1525,35 @@ def _canonical_single(text: str, last_target: Optional[str] = None) -> tuple[str
         raw = re.sub(r"^(?:faz|faça|fazer)\b", "cria", raw, flags=re.I).strip()
     key = _norm(raw)
 
+    # Música pedida por nome é mídia, nunca movimento de janela. Esta rota
+    # precisa vir antes de "coloca" ser interpretado como verbo de mover.
+    music_spotify = re.match(
+        r"^(?:toca|toque|tocar|coloca|coloque|colocar|bota|bote|botar|reproduz|reproduza|reproduzir)\s+"
+        r"(?:a\s+|uma\s+)?(?:musica|música|faixa|som)\s+(.+?)\s+(?:no|na)\s+spotify\s*$",
+        raw, re.I,
+    )
+    if music_spotify:
+        return f"v8:play_spotify:{_clean_target(music_spotify.group(1))}", False
+
+    music_request = re.match(
+        r"^(?:toca|toque|tocar|coloca|coloque|colocar|bota|bote|botar|reproduz|reproduza|reproduzir)\s+"
+        r"(?:a\s+|uma\s+)?(?:musica|música|faixa|som)\s+(.+)$",
+        raw, re.I,
+    )
+    if not music_request:
+        music_request = re.match(r"^(?:musica|música)\s+(.+)$", raw, re.I)
+    if music_request:
+        query = _clean_target(music_request.group(1))
+        if query:
+            return f"v8:play_music:{query}", False
+
+    if re.fullmatch(
+        r"(?:carrega|carregue|carregar|recarrega|recarregue|recarregar|ativa|ative|ativar)\s+"
+        r"(?:o\s+)?(?:controle\s+de\s+)?(?:monitores|monitor|telas|tela)",
+        key, re.I,
+    ):
+        return "v8:reload_monitors", False
+
     # Volume: combina verbo + entidade + valor, tolerando transcricoes como
     # "abaixo ao volume para 50" sem contaminar o verbo "passa" de janelas.
     vm = re.match(r"^(?:abaixa|abaixe|abaixar|baixo|abaixo|reduz|reduza|reduzir|diminui|diminua)\s+(?:o|ao)?\s*(?:volume|som)\s+(?:para|pra|em|a)\s*(\d{1,3})$", key)
@@ -1630,6 +1691,14 @@ def _canonical_single(text: str, last_target: Optional[str] = None) -> tuple[str
         return f"v8:browser_search:Opera|{search_query}", False
     if re.match(rf"^{search_verbs}\s+(?:no|na)\s+{browser_expr}\s*$", raw, re.I):
         return "v8:browser_search:Opera|", False
+
+    # "pesquisar bota" / "buscar preço do X" também é busca local no
+    # navegador. Antes isso caía em conversa/Gemini e podia estourar watchdog.
+    generic_search = re.match(rf"^{search_verbs}\s+(.+)$", raw, re.I)
+    if generic_search:
+        query = _clean_spoken_search_query(generic_search.group(1))
+        if query and _norm(query) not in {"no opera", "na opera", "opera", "navegador"}:
+            return f"v8:browser_search:Opera|{query}", False
 
     if re.match(r"^(?:abre|abra|abrir)\s+(?:o\s+)?meu\s+navegador$", key):
         return "abre Opera", False

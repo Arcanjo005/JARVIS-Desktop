@@ -358,31 +358,9 @@ class SystemActions:
         if not requested:
             return "Nao identifiquei qual aplicativo devo fechar."
 
-        resolver_match = None
-        resolver_ambiguous = False
-        if self.app_resolver:
-            try:
-                resolution = self.app_resolver.resolve(app_name, limit=8)
-                resolver_ambiguous = bool(
-                    not resolution.safe
-                    and resolution.candidates
-                    and float(resolution.confidence or 0.0) >= 0.72
-                )
-                if resolution.safe and resolution.selected:
-                    resolver_match = resolution.selected_dict() or {}
-                elif resolver_ambiguous:
-                    names = []
-                    for item in resolution.candidates[:4]:
-                        label = item.record.name
-                        if label not in names:
-                            names.append(label)
-                    return (
-                        f"'{app_name}' ficou ambiguo entre {', '.join(names[:3])}. "
-                        "Diga qual deles você quer fechar."
-                    )
-            except Exception:
-                resolver_match = None
-
+        # Aliases de processo conhecidos são determinísticos. Não deixe o
+        # resolvedor fuzzy transformar três registros do mesmo Opera/OBS
+        # (nome, atalho e versão) em uma falsa ambiguidade.
         aliases = {
             "photoshop": ["photoshop"],
             "illustrator": ["illustrator"],
@@ -396,6 +374,32 @@ class SystemActions:
             "revo uninstaller": ["revouninpro", "revouninstaller", "revo uninstaller"],
             "geek": ["geek"],
         }
+        deterministic_alias = requested in aliases
+
+        resolver_match = None
+        resolver_ambiguous = False
+        if self.app_resolver:
+            try:
+                resolution = self.app_resolver.resolve(app_name, limit=8)
+                resolver_ambiguous = bool(
+                    not resolution.safe
+                    and resolution.candidates
+                    and float(resolution.confidence or 0.0) >= 0.72
+                )
+                if resolution.safe and resolution.selected:
+                    resolver_match = resolution.selected_dict() or {}
+                elif resolver_ambiguous and not deterministic_alias:
+                    names = []
+                    for item in resolution.candidates[:4]:
+                        label = item.record.name
+                        if label not in names:
+                            names.append(label)
+                    return (
+                        f"'{app_name}' ficou ambiguo entre {', '.join(names[:3])}. "
+                        "Diga qual deles você quer fechar."
+                    )
+            except Exception:
+                resolver_match = None
 
         wanted = {requested}
         for key, values in aliases.items():

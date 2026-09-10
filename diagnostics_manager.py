@@ -121,24 +121,28 @@ class DiagnosticsManager:
                 lines.append(f"Linguagem: ?  {exc}")
         lines.append("")
 
-        # Gemini
+        # Gemini: configuração local e saúde do último transporte são estados
+        # diferentes. Um 503 temporário não significa chave inválida.
         try:
-            core_ok = bool(
-                core
-                and core.is_available()
-            )
+            api = core.get_api_status() if core and hasattr(core, "get_api_status") else {}
+            configured = bool(api.get("key_configured"))
+            available = bool(api.get("available"))
+            remote_error = str(api.get("last_error") or "").strip()
             lines.append(
-                f"Gemini {self._mark(core_ok)}"
-                + (
-                    f"  modelo={getattr(core, 'FAST_MODEL', '?')}"
-                    if core
-                    else ""
+                f"Gemini {self._mark(available)}"
+                f"  chave={'OK' if configured else 'AUSENTE'}"
+                f"  cliente={'PRONTO' if available else 'INDISPONÍVEL'}"
+                + (f"  modelo={api.get('model') or getattr(core, 'FAST_MODEL', '?')}" if core else "")
+            )
+            if api.get("last_success"):
+                lines.append(f"Gemini último sucesso: {api.get('last_success')}")
+            if remote_error:
+                lines.append(
+                    f"Gemini último erro remoto: {remote_error}"
+                    + (f"  em={api.get('last_error_at')}" if api.get("last_error_at") else "")
                 )
-            )
         except Exception as exc:
-            lines.append(
-                f"Gemini ✗  {exc}"
-            )
+            lines.append(f"Gemini ✗  {exc}")
 
         # Memória
         try:
@@ -239,25 +243,15 @@ class DiagnosticsManager:
                         wake_alive = bool(thread and thread.is_alive())
                     except Exception:
                         wake_alive = False
-                classic_voice = "supervisor_thread_alive" not in status
-                if classic_voice:
-                    lines.append(
-                        "Runtime de voz: "
-                        f"ready={'SIM' if status.get('ready') else 'NÃO'}"
-                        f"  wake-thread={'VIVA' if wake_alive else 'PARADA'}"
-                        "  modo=ESTÁVEL-CLÁSSICO"
-                        "  supervisor=DESATIVADO"
-                    )
-                else:
-                    lines.append(
-                        "Runtime de voz: "
-                        f"ready={'SIM' if status.get('ready') else 'NÃO'}"
-                        f"  wake-thread={'VIVA' if wake_alive else 'PARADA'}"
-                        f"  supervisor={'VIVO' if status.get('supervisor_thread_alive') else 'PARADO'}"
-                        f"  estágio={status.get('bootstrap_stage') or '-'}"
-                        f"  idade={status.get('bootstrap_stage_age_ms', '-')} ms"
-                        f"  autorestarts={status.get('self_heal_restarts', 0)}"
-                    )
+                classic_voice = True
+                lines.append(
+                    "Runtime de voz: "
+                    f"ready={'SIM' if status.get('ready') else 'NÃO'}"
+                    f"  thread={'VIVA' if wake_alive else 'PARADA'}"
+                    f"  tentativas={status.get('startup_attempts', 0)}"
+                    f"  reaberturas={status.get('supervisor_restarts', 0)}"
+                    f"  espera-hardware={'SIM' if status.get('auto_recovery_suspended') else 'NÃO'}"
+                )
                 lines.append(
                     "Identificação biométrica de voz "
                     + ("✓ cadastrada" if status.get("speaker_guard_enrolled") else "- desativada/opcional")
@@ -284,8 +278,10 @@ class DiagnosticsManager:
                 if classic_voice:
                     lines.append(
                         "Captura de audio:"
-                        f" modo={status.get('capture_mode') or 'stable-direct-16k'}"
-                        "  driver=16000Hz direto"
+                        f" modo={status.get('capture_mode') or '-'}"
+                        f"  driver={status.get('capture_sample_rate') or '-'}Hz->16000Hz"
+                        f"  host={status.get('input_hostapi') or '-'}"
+                        f"  rota={int(status.get('input_candidate_pos', 0)) + 1}/{max(1, int(status.get('input_candidate_count', 0) or 0))}"
                         f"  quadros={status.get('direct_frames_read', 0)}"
                         f"  ultimo-quadro={status.get('last_audio_frame_age_ms') if status.get('last_audio_frame_age_ms') is not None else '-'} ms"
                         f"  overflows={status.get('audio_driver_overflows', 0)}"
