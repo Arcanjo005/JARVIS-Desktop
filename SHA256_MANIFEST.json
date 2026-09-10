@@ -1,0 +1,32 @@
+{
+  "version": "1.1.4",
+  "build": "2026.09.10-bluecore.safe3",
+  "base": "v1.1.2",
+  "files": [
+    {
+      "path": "LEIA_ANTES_DE_PUBLICAR.txt",
+      "size": 2857,
+      "sha256": "f8e5ec921d0dcb11020239630c2cc33148de7554205a6f7619546ecf085038c6"
+    },
+    {
+      "path": "TESTES_RAPIDOS.txt",
+      "size": 1019,
+      "sha256": "a487ae463780e37ea378d153c5eea9cb2c9d08ec3231b9a9e17528a494ba6196"
+    },
+    {
+      "path": "jarvis_release_114_bootstrap.py",
+      "size": 42756,
+      "sha256": "32f61226dab185447a941a5a13eeb6731d83b07576524515218b181c1b5ac945"
+    },
+    {
+      "path": "jarvis_version.py",
+      "size": 752,
+      "sha256": "e0af24352eb3bff06363530ee9bfd85293d44d07bda85c7dfdf54f2fdbe07366"
+    },
+    {
+      "path": "requirements.txt",
+      "size": 1130,
+      "sha256": "fc54fbf28a08cafd110912bf9155a5e380f4f7d680da6dd9118774ba06dea837"
+    }
+  ]
+}

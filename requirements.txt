@@ -24,10 +24,9 @@ send2trash>=1.8.3,<2
 googletrans==4.0.1
 yfinance>=0.2.18
 requests>=2.31.0
-
-
 # Web e Scraping - Mark 13 Final
 beautifulsoup4>=4.12.3
+yt-dlp>=2025.1,<2027
 
 
 # Banco de Dados e Ambiente
@@ -46,8 +45,6 @@ pystray>=0.19.5,<1
 # Visualização de Dados (opcional)
 
 # Interface Alternativa (opcional)
-
-
 # Runtime JARVIS Build 13 (pipeline atual)
 google-genai>=2.14,<3
 faster-whisper>=1.2,<2
