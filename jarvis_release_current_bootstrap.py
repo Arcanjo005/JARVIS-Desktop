@@ -21,15 +21,13 @@ def _patch_current_gui() -> None:
         return
 
     def conversation_visual_lock_active(self) -> bool:
-        # Important: returning False here prevents legacy gui.py from replacing
-        # every real VoiceEngine state with OUVINDO just because conversation
-        # mode is enabled.
+        # Prevent legacy gui.py from replacing every real VoiceEngine state
+        # with OUVINDO just because conversation mode is enabled.
         return False
 
     def sync_conversation_overlay_lock(self, enabled=None):
         # The new overlay still needs to know conversation mode so it can grow
-        # from the tiny idle orb and show captions. This is intentionally
-        # independent from the legacy visual lock above.
+        # from the tiny idle orb and show captions, without forcing OUVINDO.
         active = False
         try:
             active = bool(self.voice_engine and self.voice_engine.conversation_mode)
@@ -74,14 +72,12 @@ def _patch_current_gui() -> None:
             controller = getattr(self, "qt_voice_overlay", None)
             if controller:
                 controller.set_state(state)
-                self._sync_conversation_overlay_lock()
-                if not capturing and not self._sync_conversation_overlay_lock():
+                active = self._sync_conversation_overlay_lock()
+                if not capturing and not active:
                     controller.set_compact(True)
         except Exception:
             pass
 
-    # Keep all modern gui.py rendering/controller methods. Only neutralize the
-    # obsolete state lock and keep modern VoiceEngine untouched.
     cls._conversation_visual_lock_active = conversation_visual_lock_active
     cls._sync_conversation_overlay_lock = sync_conversation_overlay_lock
     cls._settle_voice_idle = settle_voice_idle
@@ -93,6 +89,11 @@ def _keep_modern_voice_engine() -> None:
     cls = getattr(mod, "VoiceEngine", None) if mod is not None else None
     if cls is None or "voice" in _legacy._PATCHED:
         return
+    try:
+        from jarvis_audio_reliability_patch import install as _install_audio_reliability
+        _install_audio_reliability(cls)
+    except Exception:
+        pass
     _legacy._PATCHED.add("voice")
 
 
