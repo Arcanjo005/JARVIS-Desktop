@@ -107,6 +107,30 @@ begin
   Result := HasCommandLineSwitch('/UPDATE=1');
 end;
 
+procedure StopRunningJarvis;
+var
+  ResultCode: Integer;
+begin
+  { A janela pode ter sido ocultada na bandeja e continuar segurando o mutex.
+    Encerra somente JARVIS.exe antes de substituir os arquivos. }
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM JARVIS.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+procedure ResetHotRuntimePointers;
+begin
+  { O instalador completo é a fonte de verdade. Remove somente os ponteiros
+    efêmeros do Hot Runtime; não toca em chave, conversas ou preferências. }
+  DeleteFile(ExpandConstant('{localappdata}\JARVIS\runtime\active.json'));
+  DeleteFile(ExpandConstant('{localappdata}\JARVIS\runtime\booting.json'));
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  StopRunningJarvis;
+  ResetHotRuntimePointers;
+  Result := '';
+end;
+
 procedure CurPageChanged(CurPageID: Integer);
 begin
   if CurPageID = wpReady then
