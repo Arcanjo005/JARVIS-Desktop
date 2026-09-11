@@ -99,7 +99,8 @@ jobs:
             release/JARVIS_HotUpdate_${{ env.HOT_VERSION }}.zip.sha256
             release/JARVIS_HotUpdate_${{ env.HOT_VERSION }}.json
           if-no-files-found: error
-          compression-level: 6
+          # O ZIP já está comprimido; recomprimir o artifact só aumenta latência.
+          compression-level: 0
 
       - name: Publicar Release rápida
         shell: bash
