@@ -7,6 +7,12 @@ The voice overlay is a separate smooth 3D Qt process. If Qt is unavailable, the
 Tk/PIL fallback is deliberately throttled and yields to UI backlog so a visual
 animation can never monopolize the main Tk event loop again. When Qt is alive,
 any stale Tk fallback window is explicitly closed so only one orb can exist.
+
+Shutdown policy:
+- closing the main window terminates JARVIS instead of hiding an invisible
+  instance in the tray;
+- this prevents the next shortcut launch from finding the old mutex and doing
+  nothing, which looked like a frozen application after the first successful run.
 """
 from __future__ import annotations
 
@@ -23,6 +29,7 @@ def _patch_current_gui() -> None:
 
     original_render_orb_frame = getattr(cls, "_render_orb_frame", None)
     original_setup_qt = getattr(cls, "_setup_qt_voice_overlay", None)
+    original_on_closing = getattr(cls, "_on_closing", None)
 
     def conversation_visual_lock_active(self) -> bool:
         return False
@@ -183,11 +190,36 @@ def _patch_current_gui() -> None:
             except Exception:
                 pass
 
+    def hard_close_main_window(self):
+        """Close the application instead of leaving a hidden tray instance."""
+        try:
+            self._exit_requested = True
+        except Exception:
+            pass
+        if callable(original_on_closing):
+            return original_on_closing(self)
+        try:
+            controller = getattr(self, "qt_voice_overlay", None)
+            if controller:
+                controller.stop()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "voice_engine", None):
+                self.voice_engine.stop()
+        except Exception:
+            pass
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+
     cls._conversation_visual_lock_active = conversation_visual_lock_active
     cls._sync_conversation_overlay_lock = sync_conversation_overlay_lock
     cls._setup_qt_voice_overlay = setup_qt_voice_overlay
     cls._settle_voice_idle = settle_voice_idle
     cls._animate_voice_orb = safe_tk_orb_animation
+    cls._on_closing = hard_close_main_window
     _legacy._PATCHED.add("gui")
 
 
