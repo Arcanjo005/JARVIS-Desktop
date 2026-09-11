@@ -6,10 +6,19 @@ on:
       version:
         description: "Versão do JARVIS"
         required: true
-        default: "1.0.0"
+        default: "1.2.4"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/build-request.json"
 
 permissions:
   contents: write
+
+concurrency:
+  group: jarvis-full-release
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -19,6 +28,24 @@ jobs:
     steps:
       - name: Baixar projeto
         uses: actions/checkout@v7
+
+      - name: Resolver versão da release
+        shell: powershell
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:EVENT_NAME -eq "push") {
+            $request = Get-Content -LiteralPath ".github/build-request.json" -Raw | ConvertFrom-Json
+            $version = [string]$request.version
+          } else {
+            $version = [string]$env:INPUT_VERSION
+          }
+          $version = $version.Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Versão inválida: '$version'"
+          }
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Preparar Python para compilacao
         uses: actions/setup-python@v7
@@ -34,17 +61,17 @@ jobs:
         shell: powershell
         run: |
           ./build/build_windows.ps1 `
-            -Version "${{ inputs.version }}" `
+            -Version "$env:RELEASE_VERSION" `
             -Repository "${{ github.repository }}" `
             -RunNumber "${{ github.run_number }}"
 
       - name: Salvar instalador
         uses: actions/upload-artifact@v4
         with:
-          name: JARVIS-Desktop-${{ inputs.version }}
+          name: JARVIS-Desktop-${{ env.RELEASE_VERSION }}
           path: |
-            release/JARVIS_Setup_${{ inputs.version }}.exe
-            release/JARVIS_Setup_${{ inputs.version }}.exe.sha256
+            release/JARVIS_Setup_${{ env.RELEASE_VERSION }}.exe
+            release/JARVIS_Setup_${{ env.RELEASE_VERSION }}.exe.sha256
           if-no-files-found: error
 
       - name: Criar Release
@@ -52,16 +79,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "v${{ inputs.version }}"
+          $tag = "v$env:RELEASE_VERSION"
+          if (gh release view $tag *> $null) {
+            throw "A release $tag já existe. Use um número novo."
+          }
 
           gh release create $tag `
             --draft `
             --target "${{ github.sha }}" `
-            --title "JARVIS Desktop ${{ inputs.version }}" `
+            --title "JARVIS Desktop $env:RELEASE_VERSION" `
             --notes-file "RELEASE_NOTES.md"
 
           gh release upload $tag `
-            "release/JARVIS_Setup_${{ inputs.version }}.exe" `
-            "release/JARVIS_Setup_${{ inputs.version }}.exe.sha256"
+            "release/JARVIS_Setup_$env:RELEASE_VERSION.exe" `
+            "release/JARVIS_Setup_$env:RELEASE_VERSION.exe.sha256"
 
           gh release edit $tag --draft=false --latest
