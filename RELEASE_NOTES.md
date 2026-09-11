@@ -1,15 +1,15 @@
-# JARVIS Desktop 1.2.4 — Interface refinada e atualização mais rápida
+# JARVIS Desktop 1.2.5 — Histórico e interface correta após atualizar
 
-- Mantém e consolida as melhorias de interface/UX da linha 1.2.3: prioridade para UI e chat, inicialização escalonada, voz/Whisper sob demanda, watchdog de responsividade, fila gráfica limitada por ciclo e diagnóstico automático de congelamento.
-- Preserva o Chat Core e a interface Blue Core, com separação mais segura entre chat, voz, overlay e módulos em segundo plano.
-- Inclui as correções atuais em `main.py` e `requirements.txt`, por isso esta versão é publicada como instalador completo e não como Hot Update.
-- Otimiza o workflow `Publish JARVIS Hot Update (fast)` para as próximas atualizações normais, reduzindo testes redundantes e trabalho de compressão.
-- Mantém no caminho rápido o `jarvis_hot_update_selftest.py` e a compilação individual das fontes que realmente entram no pacote.
-- Adiciona gatilho por `.github/hot-update-request.json` para solicitar Hot Updates sem abrir manualmente a tela do GitHub Actions.
-- Adiciona também gatilho por `.github/build-request.json`, permitindo disparar builds completos diretamente pelo fluxo integrado.
-- Reduz o timeout do Hot Update, impede execuções concorrentes e evita recompressão desnecessária do artifact.
-- Adiciona `.gitignore` para impedir novos caches Python, logs, `dist/`, `release/`, ambientes virtuais e outras saídas locais no repositório.
-- Mantém intacta a proteção do baseline: mudanças em bootstrap, dependências, toolchain, modelos Vosk/ONNX e outros arquivos críticos continuam exigindo instalador completo.
+- Corrige o caso em que um Hot Runtime antigo salvo no AppData podia continuar sobrescrevendo a interface de um instalador mais novo.
+- Ao instalar uma versão completa mais recente, runtimes antigos agora são desativados automaticamente e o código da instalação nova passa a prevalecer.
+- Isso restaura a interface atual da lateral, incluindo a lista de conversas já salva no banco; o histórico não é apagado ao criar um novo chat.
+- Mantém na lateral apenas a navegação principal da interface atual, deixando ações complementares concentradas no menu de três pontos para evitar duplicação visual.
+- Garante que a versão atual do controle de rolagem da conversa seja realmente carregada, evitando que uma GUI antiga continue causando comportamento de scroll incorreto após a atualização.
+- O diagnóstico passa a informar `Versão instalada`, `Versão efetiva` e se há `Hot Runtime` ativo, incluindo sua pasta quando aplicável.
+- `Voz` ainda não inicializada deixa de aparecer como falha quando estiver corretamente no modo sob demanda/lazy.
+- Entrada e saída de áudio sem nome identificável passam a ser mostradas como estado indeterminado, em vez de um check verde enganoso.
+- O núcleo protegido do Hot Runtime foi separado e também bloqueado para pacotes source-only, preservando a segurança do bootstrap nas próximas atualizações rápidas.
+- Mantém as otimizações de responsividade, inicialização escalonada, watchdog da UI, Chat Core e demais melhorias da linha 1.2.x.
 
-Versão: 1.2.4
+Versão: 1.2.5
 Canal: stable
