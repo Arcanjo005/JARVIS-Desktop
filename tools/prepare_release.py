@@ -37,6 +37,23 @@ def write_version_resource(version: str):
     (ROOT / "build" / "version_info.txt").write_text(content, encoding="utf-8")
 
 
+def activate_conversation_shell():
+    """Use the conversation-first shell in release builds without rewriting gui.py."""
+    shell = ROOT / "gui_conversation_shell.py"
+    if not shell.is_file():
+        raise RuntimeError("gui_conversation_shell.py ausente")
+
+    main_path = ROOT / "main.py"
+    text = main_path.read_text(encoding="utf-8")
+    old = "from gui import JarvisGUI"
+    new = "from gui_conversation_shell import JarvisGUI"
+    if new in text:
+        return
+    if old not in text:
+        raise RuntimeError("Import de JarvisGUI não encontrado em main.py")
+    main_path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", required=True)
@@ -69,6 +86,7 @@ def main():
     config["bootstrap_version"] = version
     config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
+    activate_conversation_shell()
     write_version_resource(version)
     (ROOT / "RELEASE_VERSION.txt").write_text(version + "\n", encoding="utf-8")
     print(f"JARVIS Desktop {version} preparado para {repository}")
