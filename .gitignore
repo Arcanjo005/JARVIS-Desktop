@@ -1,0 +1,29 @@
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments and secrets
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Local runtime/output
+logs/
+screenshots/
+dist/
+release/
+
+# Generated build working directories
+build/pyinstaller/
+build/pyinstaller_hooks/
+build/hot-runtime-smoke/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.log
