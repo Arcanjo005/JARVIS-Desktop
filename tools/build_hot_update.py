@@ -151,7 +151,9 @@ def main() -> int:
     sha_path = release_dir / f"{base_name}.zip.sha256"
 
     manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+    # Level 6 is a better latency/size tradeoff for source-only updates. Level 9
+    # spends noticeably more CPU for a very small size gain on Python sources.
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for name, data in files_payload:
             archive.writestr(name, data)
         archive.writestr("runtime_manifest.json", manifest_bytes)
