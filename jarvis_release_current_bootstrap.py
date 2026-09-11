@@ -13,6 +13,10 @@ Shutdown policy:
   instance in the tray;
 - this prevents the next shortcut launch from finding the old mutex and doing
   nothing, which looked like a frozen application after the first successful run.
+
+Voice visual policy:
+- SEM_MICROFONE and RECONECTANDO are recoverable amber states;
+- only a true engine exception is rendered as permanent ERRO/red.
 """
 from __future__ import annotations
 
@@ -30,6 +34,7 @@ def _patch_current_gui() -> None:
     original_render_orb_frame = getattr(cls, "_render_orb_frame", None)
     original_setup_qt = getattr(cls, "_setup_qt_voice_overlay", None)
     original_on_closing = getattr(cls, "_on_closing", None)
+    original_voice_state = getattr(cls, "_on_voice_engine_state", None)
 
     def conversation_visual_lock_active(self) -> bool:
         return False
@@ -81,13 +86,31 @@ def _patch_current_gui() -> None:
             pass
         return result
 
+    def voice_engine_state(self, state, detail=""):
+        state_key = str(state or "").upper()
+        result = original_voice_state(self, state, detail) if callable(original_voice_state) else None
+        if state_key in {"SEM_MICROFONE", "RECONECTANDO", "AGUARDANDO_RECURSO"}:
+            self._voice_engine_state = state_key
+            self._voice_engine_detail = str(detail or "")
+            self.is_listening = False
+            self._voice_visual_state = "RECONECTANDO"
+            controller = getattr(self, "qt_voice_overlay", None)
+            if controller:
+                try:
+                    controller.set_state("RECONECTANDO")
+                except Exception:
+                    pass
+        return result
+
     def settle_voice_idle(self):
         if getattr(self, "_pending_confirmation", None) or getattr(self, "_voice_followup_after_tts", False):
             return
         capturing = False
         busy = False
+        mic_ok = True
         try:
             if self.voice_engine:
+                mic_ok = bool(self.voice_engine.microphone_available)
                 busy = bool(
                     self.voice_engine.speaking
                     or (
@@ -103,9 +126,13 @@ def _patch_current_gui() -> None:
             pass
         if busy:
             return
-        state = "OUVINDO" if capturing else "REPOUSO"
+        if not mic_ok:
+            state = "RECONECTANDO"
+            self._voice_engine_state = "SEM_MICROFONE"
+        else:
+            state = "OUVINDO" if capturing else "REPOUSO"
+            self._voice_engine_state = "OUVINDO" if capturing else "AGUARDANDO"
         self._voice_visual_state = state
-        self._voice_engine_state = "OUVINDO" if capturing else "AGUARDANDO"
         try:
             controller = getattr(self, "qt_voice_overlay", None)
             if controller:
@@ -156,6 +183,7 @@ def _patch_current_gui() -> None:
         active = state in {
             "OUVINDO", "ESCUTANDO", "ESPERANDO_RESPOSTA", "ENTENDENDO",
             "PENSANDO", "PROCESSANDO", "EXECUTANDO", "FALANDO", "ERRO",
+            "RECONECTANDO",
         }
         try:
             self.voice_orb_phase += 0.085 if active else 0.035
@@ -217,6 +245,7 @@ def _patch_current_gui() -> None:
     cls._conversation_visual_lock_active = conversation_visual_lock_active
     cls._sync_conversation_overlay_lock = sync_conversation_overlay_lock
     cls._setup_qt_voice_overlay = setup_qt_voice_overlay
+    cls._on_voice_engine_state = voice_engine_state
     cls._settle_voice_idle = settle_voice_idle
     cls._animate_voice_orb = safe_tk_orb_animation
     cls._on_closing = hard_close_main_window
