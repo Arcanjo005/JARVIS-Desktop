@@ -96,6 +96,7 @@ build_requirements_src = (root / "build" / "requirements-build.txt").read_text(e
 updater_src = (root / "github_updater.py").read_text(encoding="utf-8")
 hot_workflow_src = (root / ".github" / "workflows" / "publish-hot-update.yml").read_text(encoding="utf-8")
 hot_runtime_src = (root / "hot_update_runtime.py").read_text(encoding="utf-8")
+hot_runtime_core_src = (root / "hot_update_runtime_core.py").read_text(encoding="utf-8")
 baseline = json.loads((root / "build" / "hot_runtime_baseline.json").read_text(encoding="utf-8"))
 
 check("activate_hot_runtime" in main_src, "main sem hot runtime")
@@ -195,7 +196,15 @@ check("hot-runtime-smoke" in build_src and "JARVIS_EXPECT_HOT_VERSION" in build_
 check("jarvis_hot_update_selftest.py" in hot_workflow_src and "jarvis_desktop_selftest.py" in hot_workflow_src, "workflow rápido publica sem regressão do runtime")
 check('"requests>=2.31,<3"' in hot_workflow_src, "workflow rápido não instala requests exigido pelo selftest/updater")
 check("build/requirements-build.txt" in (baseline.get("locked_files") or {}), "baseline hot não protege toolchain do build completo")
-check("conteúdo diferente" in hot_runtime_src and "novo número de versão" in hot_runtime_src, "runtime hot permite reutilizar versão com conteúdo diferente")
+# The immutable-release rule lives in hot_update_runtime_core.py after the
+# protected bootstrap split. Test the implementation that actually owns it,
+# instead of requiring compatibility prose in the wrapper.
+check(
+    "conteúdo diferente" in hot_runtime_core_src
+    and "novo número de versão" in hot_runtime_core_src,
+    "runtime hot permite reutilizar versão com conteúdo diferente",
+)
+check("from jarvis_version import VERSION" not in hot_runtime_src, "bootstrap hot importa jarvis_version antes da ativação")
 
 # The clean source package must not contain a real .env.
 check(not (root / ".env").exists(), "pacote Desktop contém .env")
