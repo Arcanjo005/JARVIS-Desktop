@@ -1,11 +1,11 @@
 {
   "enabled": true,
-  "repository": "AUTO",
+  "repository": "Arcanjo005/JARVIS-Desktop",
   "installer_asset_prefix": "JARVIS_Setup_",
   "check_on_startup": true,
   "startup_delay_ms": 2500,
   "hot_updates_enabled": true,
   "hot_update_asset_prefix": "JARVIS_HotUpdate_",
   "runtime_api": 1,
-  "bootstrap_version": "AUTO"
+  "bootstrap_version": "1.2.8"
 }
