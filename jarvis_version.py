@@ -1,15 +1,16 @@
 """Canonical public version identity for JARVIS Desktop."""
 from jarvis_identity import PUBLIC_NAME, WAKE_NAME, LEGACY_NAME
 
-VERSION = "1.2.7"
-BUILD = "2026.09.11-conversation-sidebar-entrypoint.1"
+VERSION = "1.2.8"
+BUILD = "2026.09.11-runtime-unification.1"
 CHANNEL = "stable"
 INTERNAL_NAME = "JARVIS"
 
-# Chat Core, non-blocking UI and UX fixes are installed through a small compatibility layer so the
-# known-good v1.1.2 startup architecture remains untouched.
+# Keep the proven compatibility fixes, but route them through the current
+# adapter so obsolete 1.2.1 GUI/audio monkey patches can no longer override
+# the modern source tree.
 try:
-    from jarvis_release_123_bootstrap import install as _install_release_layer
+    from jarvis_release_current_bootstrap import install as _install_release_layer
     _install_release_layer()
 except Exception:
     # Version identity must never become a startup dependency.
