@@ -1,0 +1,47 @@
+JARVIS 1.2.3 - NON-BLOCKING UI
+
+OBJETIVO
+Impedir que o Windows marque a janela inteira como "Nao esta respondendo"
+por causa de voz, Whisper, overlay, banco auxiliar ou rajadas de callbacks.
+
+MUDANCAS PRINCIPAIS
+- UI/Chat tem prioridade de boot.
+- IA, learning, advanced modules, desktop integration, app index e updater
+  iniciam em momentos diferentes, todos fora da thread Tk.
+- Voz, Whisper e overlay Qt NAO iniciam automaticamente no boot.
+  Eles sao iniciados em background na primeira interacao de voz.
+- O verificador de lembretes nao consulta SQLite na thread grafica.
+- Player proativo fica suspenso por padrao nesta versao. Comandos manuais
+  de midia continuam funcionando.
+- Fila de eventos da UI processa no maximo 16 eventos/~9ms por turno.
+- Backlog de captions de voz de baixa prioridade e descartado quando necessario.
+- UI Freeze Guard grava stacks de TODAS as threads se a mainloop parar por >2,75s.
+- Relatorio: %LOCALAPPDATA%\JARVIS\logs\UI_FREEZE_DIAGNOSTIC.txt
+- Core/Gemini nao foi redesenhado por esta correcao.
+
+VERSAO
+Publica: 1.2.3
+Build: 2026.09.11-nonblocking-ui.1
+
+ANTES DE TESTAR
+1. Build/instale a 1.2.3.
+2. Execute VERIFICAR_INSTALACAO_1.2.3.bat.
+3. So continue se ele disser que C:\JARVIS\JARVIS.exe e realmente 1.2.3.
+
+TESTE PRINCIPAL
+1. Abra o JARVIS.
+2. Nao clique em voz.
+3. Deixe a janela aberta por 60 segundos.
+4. Durante esse tempo, mova a janela, role o chat e digite normalmente.
+5. Envie "eai".
+6. Envie "status do pc".
+7. Envie uma pergunta normal para Gemini.
+8. So depois clique no botao de voz.
+
+SE CONGELAR
+Feche o JARVIS e envie:
+%LOCALAPPDATA%\JARVIS\logs\UI_FREEZE_DIAGNOSTIC.txt
+
+IMPORTANTE
+Esta e uma build de TESTE. Nao publique antes de confirmar o comportamento
+no PC de casa e no PC do trabalho.

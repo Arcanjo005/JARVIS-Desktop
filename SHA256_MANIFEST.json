@@ -1,40 +1,38 @@
 {
-  "version": "1.2.1",
-  "build": "2026.09.10-ui-polish.2-adaptive",
-  "base": "1.2.1-ui-polish1",
-  "compatibility": {
-    "isolated_manager": true,
-    "chat_core_unchanged": true,
-    "machine_profile": true,
-    "audio_last_good": true,
-    "safe_boot_after_two_early_failures": true,
-    "no_global_gemini_env_changes": true
-  },
+  "version": "1.2.3",
+  "build": "2026.09.11-nonblocking-ui.1",
+  "channel": "test",
+  "purpose": "prevent-whole-window-freezes-and-capture-ui-thread-stacks",
   "files": [
     {
-      "path": "LEIA_ANTES_DE_PUBLICAR.txt",
-      "size": 2430,
-      "sha256": "f7c21b46f4748117c7c18a71567e7d61e879b5490a6346b50abfe96926ebc75f"
+      "path": "LEIA_PRIMEIRO_1.2.3.txt",
+      "size": 1757,
+      "sha256": "8a176c79146ccd43e606bdcae33d1c46aa29496be88267af9a7ecde5d1ed61bc"
     },
     {
-      "path": "TESTES_1.2.1.txt",
-      "size": 1831,
-      "sha256": "f9e18b7502e2626e954d3870b6d1d5c8cac1d1a98fe6cf187f85614dedab07eb"
+      "path": "TESTES_1.2.3.txt",
+      "size": 519,
+      "sha256": "234ffc7a39e55a84a03e93fda968f35efccb7d22336e12e2fb14a2603702490f"
     },
     {
-      "path": "jarvis_compatibility.py",
-      "size": 16850,
-      "sha256": "59633aa20962386700376748780acf5a170f6cea388d924daefc1d22f24f104f"
+      "path": "VERIFICAR_INSTALACAO_1.2.3.bat",
+      "size": 663,
+      "sha256": "6b742d69a19f6ffc4f9329df2cad1b7cc59a0bcf35768ed8a6d74ea318abaaf7"
     },
     {
-      "path": "jarvis_release_121_bootstrap.py",
-      "size": 91836,
-      "sha256": "d495c1ecc06de731160b3df4d35dc885bba4bbbf0b62922d09aeebd6bddbffa0"
+      "path": "jarvis_release_123_bootstrap.py",
+      "size": 96123,
+      "sha256": "c7c208c65be21a47e5602df9336fd7349a304ee1db4e1c09b12e1f54c7446f33"
+    },
+    {
+      "path": "jarvis_ui_guard.py",
+      "size": 7390,
+      "sha256": "9f3daff8dfb8fc2bdf70e58cf06fe5e8a43d25e2c10d8ca0d3dd13abd7ae5ae6"
     },
     {
       "path": "jarvis_version.py",
-      "size": 792,
-      "sha256": "017e3c6361b31b3a42ff5f38b716a477146659b60c2c0b0324ff4fdcec1edf0d"
+      "size": 773,
+      "sha256": "626a60b3d1207038741c84121216b2c5e8baab8b3e76ca97184953f30e50ffbf"
     },
     {
       "path": "requirements.txt",

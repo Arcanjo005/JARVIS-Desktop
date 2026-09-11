@@ -1,0 +1,15 @@
+JARVIS 1.2.3 - CHECKLIST
+
+[ ] VERIFICAR_INSTALACAO_1.2.3.bat confirma ProductVersion 1.2.3
+[ ] Janela fica responsiva por 60 s sem usar voz
+[ ] Sidebar abre/fecha sem travar
+[ ] Scroll continua responsivo
+[ ] "eai" responde
+[ ] "status do pc" responde
+[ ] Pergunta Gemini responde
+[ ] Voz so inicia depois do primeiro uso do botao/microfone
+[ ] A inicializacao do Whisper nao congela a janela
+[ ] Fechar o JARVIS encerra normalmente
+
+Se houver congelamento, coletar:
+%LOCALAPPDATA%\JARVIS\logs\UI_FREEZE_DIAGNOSTIC.txt
