@@ -69,14 +69,17 @@ jobs:
               env.write(f"HOT_MINIMUM_BOOTSTRAP={minimum}\n")
           PY
 
+      - name: Instalar dependências leves do validador
+        shell: bash
+        run: python -m pip install --quiet "packaging>=24,<27" "requests>=2.31,<3"
+
       - name: Validar Hot Runtime antes de publicar
         shell: bash
         run: |
           python jarvis_hot_update_selftest.py
           # As regressões completas continuam obrigatórias em build/build_windows.ps1:
           # jarvis_desktop_selftest.py, jarvis_build16_selftest.py e jarvis_v8_selftest.py.
-          # requests>=2.31,<3 continua validado/instalado no build completo; o caminho hot
-          # usa somente stdlib e o builder já compila cada fonte que entrará no ZIP.
+          # O builder compila individualmente cada fonte Python que realmente entrará no ZIP.
 
       - name: Gerar hot update sem compilar EXE
         shell: bash
