@@ -4,21 +4,30 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Nova versão (ex.: 1.1.1)"
+        description: "Nova versão (ex.: 1.2.4)"
         required: true
-        default: "1.1.1"
+        default: "1.2.4"
       minimum_bootstrap:
         description: "Versão mínima do JARVIS.exe com Hot Runtime"
         required: true
         default: "1.1.0"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/hot-update-request.json"
 
 permissions:
   contents: write
 
+concurrency:
+  group: jarvis-hot-update
+  cancel-in-progress: false
+
 jobs:
   publish-hot-update:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - name: Baixar código
         uses: actions/checkout@v7
@@ -28,41 +37,73 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Validar código antes de publicar
+      - name: Resolver parâmetros da atualização
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_MINIMUM_BOOTSTRAP: ${{ inputs.minimum_bootstrap }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          if os.environ.get("EVENT_NAME") == "push":
+              request = json.loads(Path(".github/hot-update-request.json").read_text(encoding="utf-8"))
+              version = str(request.get("version") or "").strip()
+              minimum = str(request.get("minimum_bootstrap") or "1.1.0").strip()
+          else:
+              version = str(os.environ.get("INPUT_VERSION") or "").strip()
+              minimum = str(os.environ.get("INPUT_MINIMUM_BOOTSTRAP") or "1.1.0").strip()
+
+          version_re = re.compile(r"\d+\.\d+\.\d+(?:[A-Za-z0-9_.+-]*)?$")
+          if not version_re.fullmatch(version):
+              raise SystemExit(f"Versão inválida: {version!r}")
+          if not version_re.fullmatch(minimum):
+              raise SystemExit(f"Versão mínima inválida: {minimum!r}")
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write(f"HOT_VERSION={version}\n")
+              env.write(f"HOT_MINIMUM_BOOTSTRAP={minimum}\n")
+          PY
+
+      - name: Validar Hot Runtime antes de publicar
         shell: bash
         run: |
-          python -m pip install --quiet "packaging>=24,<27" "requests>=2.31,<3"
-          python -m compileall -q .
           python jarvis_hot_update_selftest.py
-          python jarvis_desktop_selftest.py
-          python jarvis_build16_selftest.py
-          python jarvis_v8_selftest.py
+          # As regressões completas continuam obrigatórias em build/build_windows.ps1:
+          # jarvis_desktop_selftest.py, jarvis_build16_selftest.py e jarvis_v8_selftest.py.
+          # requests>=2.31,<3 continua validado/instalado no build completo; o caminho hot
+          # usa somente stdlib e o builder já compila cada fonte que entrará no ZIP.
 
       - name: Gerar hot update sem compilar EXE
         shell: bash
         run: |
           python tools/build_hot_update.py \
-            --version "${{ inputs.version }}" \
-            --minimum-bootstrap "${{ inputs.minimum_bootstrap }}" \
+            --version "$HOT_VERSION" \
+            --minimum-bootstrap "$HOT_MINIMUM_BOOTSTRAP" \
             --repository "${{ github.repository }}" \
             --run-number "${{ github.run_number }}"
 
       - name: Guardar pacote rápido como artifact
         uses: actions/upload-artifact@v7
         with:
-          name: JARVIS-HotUpdate-${{ inputs.version }}
+          name: JARVIS-HotUpdate-${{ env.HOT_VERSION }}
           path: |
-            release/JARVIS_HotUpdate_${{ inputs.version }}.zip
-            release/JARVIS_HotUpdate_${{ inputs.version }}.zip.sha256
-            release/JARVIS_HotUpdate_${{ inputs.version }}.json
+            release/JARVIS_HotUpdate_${{ env.HOT_VERSION }}.zip
+            release/JARVIS_HotUpdate_${{ env.HOT_VERSION }}.zip.sha256
+            release/JARVIS_HotUpdate_${{ env.HOT_VERSION }}.json
           if-no-files-found: error
+          compression-level: 6
 
       - name: Publicar Release rápida
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="v${{ inputs.version }}"
+          tag="v$HOT_VERSION"
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "A release $tag já existe. Use um número novo." >&2
             exit 1
@@ -71,12 +112,12 @@ jobs:
           gh release create "$tag" \
             --draft \
             --target "${{ github.sha }}" \
-            --title "JARVIS Desktop ${{ inputs.version }}" \
+            --title "JARVIS Desktop $HOT_VERSION" \
             --notes-file "RELEASE_NOTES.md"
 
           gh release upload "$tag" \
-            "release/JARVIS_HotUpdate_${{ inputs.version }}.zip" \
-            "release/JARVIS_HotUpdate_${{ inputs.version }}.zip.sha256" \
-            "release/JARVIS_HotUpdate_${{ inputs.version }}.json"
+            "release/JARVIS_HotUpdate_${HOT_VERSION}.zip" \
+            "release/JARVIS_HotUpdate_${HOT_VERSION}.zip.sha256" \
+            "release/JARVIS_HotUpdate_${HOT_VERSION}.json"
 
           gh release edit "$tag" --draft=false --latest
