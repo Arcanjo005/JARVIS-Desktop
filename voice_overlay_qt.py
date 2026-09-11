@@ -1,8 +1,9 @@
-"""JARVIS voice orb - smooth 3D Qt/PySide6 overlay.
+"""JARVIS voice orb - single small 3D Qt/PySide6 overlay.
 
-One canonical renderer: a small volumetric orb at rest, a slightly larger orb in
-conversation mode, and compact live captions below it. The child process owns
-all painting so Tkinter never shares an event loop with Qt.
+The orb keeps the exact small idle footprint in every state. Conversation mode
+only expands the transparent caption canvas below it; the sphere itself never
+switches to a larger competing variant. Captions use a cinema-style yellow fill
+with a strong black outline for readability on any desktop background.
 """
 from __future__ import annotations
 
@@ -30,13 +31,12 @@ except Exception:
         return value[:limit] if limit and len(value) > limit else value
 
 
-VOICE_ORB_OPACITY = max(0.72, min(float(jarvis_env("VOICE_ORB_OPACITY", "0.96")), 1.0))
-OVERLAY_FULL_WIDTH = 360
-OVERLAY_FULL_HEIGHT = 190
+VOICE_ORB_OPACITY = max(0.76, min(float(jarvis_env("VOICE_ORB_OPACITY", "0.98")), 1.0))
+OVERLAY_FULL_WIDTH = 420
+OVERLAY_FULL_HEIGHT = 160
 OVERLAY_COMPACT_SIZE = 88
 OVERLAY_EDGE_MARGIN = 18
-IDLE_RADIUS = 24.0
-CONVERSATION_RADIUS = 38.0
+ORB_RADIUS = 24.0
 
 
 def clamp_overlay_position(x, y, width, height, left, top, right, bottom, margin=OVERLAY_EDGE_MARGIN):
@@ -72,6 +72,7 @@ class QtVoiceOverlayController:
         self._last_state = "REPOUSO"
         self._last_caption = ""
         self._last_caption_speaker = "assistant"
+        self._last_caption_at = 0.0
         self._last_level = 0.0
         self._last_audio_metrics = {}
         self._last_compact = True
@@ -128,7 +129,7 @@ class QtVoiceOverlayController:
                 creationflags=flags,
                 cwd=str(self.project_dir),
             )
-            self._log("info", "Overlay 3D suave iniciado.")
+            self._log("info", "Overlay 3D compacto iniciado.")
             return True
         except Exception as exc:
             self.process = None
@@ -154,7 +155,7 @@ class QtVoiceOverlayController:
         self._raw_send({"cmd": "state", "value": self._last_state})
         self._raw_send({"cmd": "level", "value": self._last_level})
         self._raw_send({"cmd": "audio_metrics", "value": self._last_audio_metrics})
-        self._raw_send({"cmd": "compact", "value": self._last_compact})
+        self._raw_send({"cmd": "compact", "value": True})
         self._raw_send({"cmd": "opacity", "value": self._last_opacity})
         self._raw_send({"cmd": "caption", "value": self._last_caption, "speaker": self._last_caption_speaker})
         payload = {"cmd": "show"}
@@ -190,17 +191,16 @@ class QtVoiceOverlayController:
         return self._raw_send({"cmd": "state", "value": self._last_state}) if self.is_alive() else False
 
     def set_conversation_lock(self, enabled: bool):
-        # Kept for API compatibility. It now means visual conversation mode;
-        # it never forces OUVINDO.
+        # API compatibility: this flag controls caption layout only. It never
+        # changes orb size and never forces OUVINDO.
         self._conversation_lock = bool(enabled)
-        self._last_compact = False if self._conversation_lock else self._last_compact
+        self._last_compact = True
         if self._visible and not self._recover_if_visible():
             return False
         if not self.is_alive():
             return False
         ok = self._raw_send({"cmd": "conversation_lock", "value": self._conversation_lock})
-        if self._conversation_lock:
-            self._raw_send({"cmd": "compact", "value": False})
+        self._raw_send({"cmd": "compact", "value": True})
         return ok
 
     def set_level(self, level: float):
@@ -219,8 +219,25 @@ class QtVoiceOverlayController:
         return self._raw_send({"cmd": "audio_metrics", "value": self._last_audio_metrics}) if self.is_alive() else False
 
     def set_caption(self, text: str, speaker: str = "assistant"):
-        self._last_caption = sanitize_text(text, limit=360)
-        self._last_caption_speaker = "user" if str(speaker).lower() == "user" else "assistant"
+        incoming = sanitize_text(text, limit=360)
+        speaker_key = "user" if str(speaker).lower() == "user" else "assistant"
+
+        # gui.py clears captions on ENTENDENDO/PENSANDO transitions. Preserve
+        # the user's latest transcript briefly so conversation mode can show
+        # what JARVIS actually understood until the assistant starts replying.
+        if not incoming:
+            keep_user_caption = (
+                self._last_caption
+                and self._last_caption_speaker == "user"
+                and self._last_state in {"ENTENDENDO", "PENSANDO", "PROCESSANDO"}
+                and (time.monotonic() - self._last_caption_at) < 3.0
+            )
+            if keep_user_caption:
+                return True
+
+        self._last_caption = incoming
+        self._last_caption_speaker = speaker_key
+        self._last_caption_at = time.monotonic() if incoming else 0.0
         if self._visible and not self._recover_if_visible():
             return False
         return self._raw_send({"cmd": "caption", "value": self._last_caption, "speaker": self._last_caption_speaker}) if self.is_alive() else False
@@ -229,18 +246,19 @@ class QtVoiceOverlayController:
         return self.set_caption(text, speaker="user")
 
     def set_orb_style(self, style: str):
-        # Compatibility no-op: the rebrand intentionally has one identity.
         return True
 
     def set_compact(self, enabled: bool):
-        self._last_compact = False if self._conversation_lock else bool(enabled)
+        # One orb size only. Outside conversation the window stays compact;
+        # conversation mode expands only the transparent subtitle canvas.
+        self._last_compact = True
         if self._visible and not self._recover_if_visible():
             return False
-        return self._raw_send({"cmd": "compact", "value": self._last_compact}) if self.is_alive() else False
+        return self._raw_send({"cmd": "compact", "value": True}) if self.is_alive() else False
 
     def set_opacity(self, value: float):
         try:
-            self._last_opacity = max(0.55, min(float(value), 1.0))
+            self._last_opacity = max(0.60, min(float(value), 1.0))
         except Exception:
             self._last_opacity = VOICE_ORB_OPACITY
         if self._visible and not self._recover_if_visible():
@@ -304,28 +322,20 @@ def _run_child():
         EDGE_MARGIN = OVERLAY_EDGE_MARGIN
 
         STATE_COLORS = {
-            "REPOUSO": ((37, 126, 255), (164, 222, 255), (5, 34, 95)),
-            "AGUARDANDO": ((37, 126, 255), (164, 222, 255), (5, 34, 95)),
-            "PREPARANDO": ((50, 135, 255), (174, 226, 255), (6, 39, 102)),
-            "OUVINDO": ((16, 205, 174), (154, 255, 232), (2, 72, 69)),
-            "ESCUTANDO": ((16, 205, 174), (154, 255, 232), (2, 72, 69)),
-            "ESPERANDO_RESPOSTA": ((16, 205, 174), (154, 255, 232), (2, 72, 69)),
-            "ENTENDENDO": ((77, 190, 255), (184, 239, 255), (7, 62, 110)),
-            "PENSANDO": ((133, 89, 255), (224, 205, 255), (42, 18, 108)),
-            "PROCESSANDO": ((133, 89, 255), (224, 205, 255), (42, 18, 108)),
-            "EXECUTANDO": ((255, 157, 69), (255, 229, 178), (111, 49, 5)),
-            "FALANDO": ((33, 160, 255), (177, 235, 255), (4, 54, 128)),
-            "RECONECTANDO": ((238, 173, 61), (255, 232, 174), (104, 61, 6)),
-            "SEM_MICROFONE": ((238, 173, 61), (255, 232, 174), (104, 61, 6)),
-            "ERRO": ((241, 82, 100), (255, 191, 199), (105, 13, 29)),
-        }
-
-        STATE_LABELS = {
-            "REPOUSO": "OCIOSO", "AGUARDANDO": "OCIOSO", "PREPARANDO": "INICIANDO",
-            "OUVINDO": "OUVINDO", "ESCUTANDO": "OUVINDO", "ESPERANDO_RESPOSTA": "OUVINDO",
-            "ENTENDENDO": "ENTENDENDO", "PENSANDO": "PENSANDO", "PROCESSANDO": "PENSANDO",
-            "EXECUTANDO": "EXECUTANDO", "FALANDO": "FALANDO", "RECONECTANDO": "RECONECTANDO",
-            "SEM_MICROFONE": "MICROFONE", "ERRO": "RECUPERANDO",
+            "REPOUSO": ((37, 126, 255), (176, 229, 255), (5, 34, 95)),
+            "AGUARDANDO": ((37, 126, 255), (176, 229, 255), (5, 34, 95)),
+            "PREPARANDO": ((50, 135, 255), (184, 232, 255), (6, 39, 102)),
+            "OUVINDO": ((14, 207, 175), (166, 255, 236), (2, 72, 69)),
+            "ESCUTANDO": ((14, 207, 175), (166, 255, 236), (2, 72, 69)),
+            "ESPERANDO_RESPOSTA": ((14, 207, 175), (166, 255, 236), (2, 72, 69)),
+            "ENTENDENDO": ((72, 187, 255), (194, 242, 255), (7, 62, 110)),
+            "PENSANDO": ((133, 89, 255), (229, 210, 255), (42, 18, 108)),
+            "PROCESSANDO": ((133, 89, 255), (229, 210, 255), (42, 18, 108)),
+            "EXECUTANDO": ((255, 157, 69), (255, 232, 186), (111, 49, 5)),
+            "FALANDO": ((33, 160, 255), (190, 239, 255), (4, 54, 128)),
+            "RECONECTANDO": ((238, 173, 61), (255, 236, 184), (104, 61, 6)),
+            "SEM_MICROFONE": ((238, 173, 61), (255, 236, 184), (104, 61, 6)),
+            "ERRO": ((241, 82, 100), (255, 198, 205), (105, 13, 29)),
         }
 
         def __init__(self):
@@ -383,8 +393,9 @@ def _run_child():
             self.move(int(x), int(y))
 
         def _apply_window_mode(self):
-            want_compact = bool(self.compact and not self.conversation_mode)
-            w, h = (self.COMPACT_SIZE, self.COMPACT_SIZE) if want_compact else (self.WIDTH, self.HEIGHT)
+            # The sphere is always the same size. Conversation mode changes only
+            # the transparent area available for subtitles.
+            w, h = (self.WIDTH, self.HEIGHT) if self.conversation_mode else (self.COMPACT_SIZE, self.COMPACT_SIZE)
             if self.width() != w or self.height() != h:
                 screen = self._screen_for_point()
                 self.resize(w, h)
@@ -413,8 +424,7 @@ def _run_child():
                 self.update()
             elif cmd == "conversation_lock":
                 self.conversation_mode = bool(payload.get("value", False))
-                if self.conversation_mode:
-                    self.compact = False
+                self.compact = True
                 self._apply_window_mode(); self.update()
             elif cmd == "level":
                 try: self.level = max(0.0, min(float(payload.get("value", 0.0)), 1.0))
@@ -424,10 +434,10 @@ def _run_child():
             elif cmd == "orb_style":
                 pass
             elif cmd == "compact":
-                self.compact = False if self.conversation_mode else bool(payload.get("value", False))
+                self.compact = True
                 self._apply_window_mode(); self.update()
             elif cmd == "opacity":
-                try: self.setWindowOpacity(max(0.55, min(float(payload.get("value", VOICE_ORB_OPACITY)), 1.0)))
+                try: self.setWindowOpacity(max(0.60, min(float(payload.get("value", VOICE_ORB_OPACITY)), 1.0)))
                 except Exception: pass
             elif cmd == "caption":
                 self.caption = sanitize_text(payload.get("value") or "", limit=360)
@@ -467,65 +477,66 @@ def _run_child():
         def _state_palette(self):
             return self.STATE_COLORS.get(self.state, self.STATE_COLORS["REPOUSO"])
 
-        def _draw_orb(self, painter, cx, cy, radius):
+        def _draw_orb(self, painter, cx, cy):
             main, bright, dark = self._state_palette()
+            r = ORB_RADIUS
             listening = self.state in {"OUVINDO", "ESCUTANDO", "ESPERANDO_RESPOSTA"}
             speaking = self.state == "FALANDO"
 
-            breath = math.sin(self.phase * 1.15) * 0.018
-            reactive = self.smooth_level * 0.055 if listening else (0.022 * (0.5 + 0.5*math.sin(self.phase*3.0)) if speaking else 0.0)
-            r = radius * (1.0 + breath + reactive)
-
-            for extra, alpha in ((18, 18), (11, 30), (5, 48)):
+            # No size pulse: the requested identity is always the same small orb.
+            # Reactivity only changes light/glow intensity.
+            reactive = min(1.0, self.smooth_level) if listening else (0.45 + 0.25*math.sin(self.phase*3.0) if speaking else 0.20)
+            glow_scale = 1.0 + 0.30 * reactive
+            for extra, alpha in ((14, int(12*glow_scale)), (8, int(24*glow_scale)), (4, int(42*glow_scale))):
                 painter.setPen(Qt.NoPen)
-                painter.setBrush(QColor(*main, alpha))
+                painter.setBrush(QColor(*main, max(6, min(alpha, 72))))
                 painter.drawEllipse(QPointF(cx, cy), r + extra, r + extra)
 
             sphere = QPainterPath(); sphere.addEllipse(QPointF(cx, cy), r, r)
             painter.save(); painter.setClipPath(sphere)
 
-            grad = QRadialGradient(QPointF(cx - r*0.34, cy - r*0.38), r*1.35)
-            grad.setColorAt(0.00, QColor(252, 255, 255, 255))
-            grad.setColorAt(0.08, QColor(*bright, 252))
-            grad.setColorAt(0.30, QColor(*main, 250))
+            grad = QRadialGradient(QPointF(cx-r*0.34, cy-r*0.38), r*1.34)
+            grad.setColorAt(0.00, QColor(255,255,255,255))
+            grad.setColorAt(0.08, QColor(*bright,253))
+            grad.setColorAt(0.30, QColor(*main,250))
             mid = tuple(max(0, int(v*0.62)) for v in main)
-            grad.setColorAt(0.68, QColor(*mid, 250))
-            grad.setColorAt(1.00, QColor(*dark, 255))
+            grad.setColorAt(0.68, QColor(*mid,250))
+            grad.setColorAt(1.00, QColor(*dark,255))
             painter.setPen(Qt.NoPen); painter.setBrush(grad); painter.drawPath(sphere)
 
-            angle = (self.phase * 19.0) % 360.0
+            # Thin internal arcs rotate inside the sphere, giving depth without
+            # recreating the old concentric-reactor look.
+            angle = (self.phase * 18.0) % 360.0
             painter.translate(cx, cy); painter.rotate(angle)
-            pen = QPen(QColor(*bright, 58), max(1.2, r*0.035), Qt.SolidLine, Qt.RoundCap)
-            painter.setPen(pen); painter.setBrush(Qt.NoBrush)
-            for offset, squeeze in ((-0.18, 0.34), (0.22, 0.46)):
-                rr = r * (0.82 if offset < 0 else 0.68)
-                rect = QRectF(-rr, -rr*squeeze + r*offset, rr*2, rr*squeeze*2)
-                painter.drawArc(rect, int(195*16), int(150*16))
+            painter.setPen(QPen(QColor(*bright, 50), 1.0, Qt.SolidLine, Qt.RoundCap))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawArc(QRectF(-r*0.76, -r*0.24, r*1.52, r*0.48), int(205*16), int(128*16))
+            painter.drawArc(QRectF(-r*0.58, -r*0.38, r*1.16, r*0.76), int(24*16), int(112*16))
             painter.rotate(-angle)
 
-            sweep_x = math.cos(self.phase*0.82) * r*0.22
-            sweep_y = math.sin(self.phase*0.67) * r*0.13
-            caustic = QRadialGradient(QPointF(sweep_x-r*0.15, sweep_y-r*0.12), r*0.72)
-            caustic.setColorAt(0.0, QColor(255,255,255,55))
-            caustic.setColorAt(0.35, QColor(*bright,36))
+            sweep_x = math.cos(self.phase*0.82) * r*0.18
+            sweep_y = math.sin(self.phase*0.67) * r*0.10
+            caustic = QRadialGradient(QPointF(sweep_x-r*0.14, sweep_y-r*0.11), r*0.72)
+            caustic.setColorAt(0.0, QColor(255,255,255,58))
+            caustic.setColorAt(0.35, QColor(*bright,34))
             caustic.setColorAt(1.0, QColor(*main,0))
             painter.setPen(Qt.NoPen); painter.setBrush(caustic)
             painter.drawEllipse(QPointF(0,0), r*0.92, r*0.92)
             painter.restore()
 
             painter.setBrush(Qt.NoBrush)
-            painter.setPen(QPen(QColor(*bright, 130), max(1.0, r*0.035)))
-            painter.drawEllipse(QPointF(cx, cy), r-0.7, r-0.7)
+            painter.setPen(QPen(QColor(*bright, 136), 1.0))
+            painter.drawEllipse(QPointF(cx, cy), r-0.5, r-0.5)
             hi = QRadialGradient(QPointF(cx-r*0.38, cy-r*0.42), r*0.42)
-            hi.setColorAt(0.0, QColor(255,255,255,178)); hi.setColorAt(1.0, QColor(255,255,255,0))
+            hi.setColorAt(0.0, QColor(255,255,255,184)); hi.setColorAt(1.0, QColor(255,255,255,0))
             painter.setPen(Qt.NoPen); painter.setBrush(hi)
             painter.drawEllipse(QPointF(cx-r*0.28, cy-r*0.31), r*0.42, r*0.34)
 
             a = self.phase * 1.05
             ox = cx + math.cos(a) * r*0.82
             oy = cy + math.sin(a) * r*0.40
-            painter.setBrush(QColor(*bright, 220)); painter.setPen(Qt.NoPen)
-            painter.drawEllipse(QPointF(ox, oy), max(1.5, r*0.045), max(1.5, r*0.045))
+            painter.setBrush(QColor(*bright, 225)); painter.setPen(Qt.NoPen)
+            painter.drawEllipse(QPointF(ox, oy), 1.5, 1.5)
 
         def _wrapped_lines(self, text, font, max_width, max_lines=3):
             clean = " ".join(str(text or "").split())
@@ -546,41 +557,44 @@ def _run_child():
                 lines[-1] = last + "..."
             return lines[:max_lines]
 
+        def _draw_cinema_subtitle(self, painter, text, speaker, center_x, start_y):
+            prefix = "VOCÊ: " if speaker == "user" else "JARVIS: "
+            full = prefix + text
+            font = QFont("Segoe UI", 11)
+            font.setBold(True)
+            lines = self._wrapped_lines(full, font, self.width()-40, max_lines=3)
+            metrics = QFontMetrics(font)
+            y = float(start_y)
+            for line in lines:
+                width = metrics.horizontalAdvance(line)
+                baseline = y + metrics.ascent()
+                path = QPainterPath()
+                path.addText(QPointF(center_x-width/2.0, baseline), font, line)
+
+                # Classic cinema subtitle: high-contrast black outline/shadow
+                # around a warm yellow glyph, rendered as vector paths.
+                painter.setBrush(QColor(0,0,0,0))
+                painter.setPen(QPen(QColor(0,0,0,245), 4.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+                painter.drawPath(path)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QColor(255, 216, 64, 255))
+                painter.drawPath(path)
+                y += metrics.height() + 3
+
         def paintEvent(self, event):
             painter = QPainter(self)
             painter.setRenderHint(QPainter.Antialiasing, True)
             painter.setRenderHint(QPainter.TextAntialiasing, True)
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
-            compact_visual = bool(self.compact and not self.conversation_mode)
-            if compact_visual:
-                self._draw_orb(painter, self.width()/2.0, self.height()/2.0, IDLE_RADIUS)
+            if not self.conversation_mode:
+                self._draw_orb(painter, self.width()/2.0, self.height()/2.0)
                 return
 
             cx = self.width()/2.0
-            cy = 58.0
-            self._draw_orb(painter, cx, cy, CONVERSATION_RADIUS)
-
-            label = self.STATE_LABELS.get(self.state, self.state)
-            font_state = QFont("Segoe UI", 8); font_state.setBold(True)
-            painter.setFont(font_state); painter.setPen(QColor(190, 218, 241, 205))
-            metrics = QFontMetrics(font_state); tw = metrics.horizontalAdvance(label)
-            painter.drawText(QPointF(cx - tw/2.0, 112.0), label)
-
+            self._draw_orb(painter, cx, 38.0)
             if self.caption:
-                prefix = "Voce: " if self.caption_speaker == "user" else "JARVIS: "
-                full = prefix + self.caption
-                font = QFont("Segoe UI", 10)
-                lines = self._wrapped_lines(full, font, self.width()-34, max_lines=3)
-                painter.setFont(font)
-                color = QColor(177, 245, 226, 245) if self.caption_speaker == "user" else QColor(229, 244, 255, 245)
-                y = 137.0
-                for line in lines:
-                    m = QFontMetrics(font); w = m.horizontalAdvance(line)
-                    bg = QRectF(cx-w/2.0-7, y-m.ascent()-3, w+14, m.height()+5)
-                    painter.setPen(Qt.NoPen); painter.setBrush(QColor(4, 12, 24, 118)); painter.drawRoundedRect(bg, 6, 6)
-                    painter.setPen(color); painter.drawText(QPointF(cx-w/2.0, y), line)
-                    y += m.height()+3
+                self._draw_cinema_subtitle(painter, self.caption, self.caption_speaker, cx, 80.0)
 
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
