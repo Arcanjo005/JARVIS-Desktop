@@ -1,0 +1,41 @@
+JARVIS DESKTOP 1.2.1 - UI POLISH - READY TO PUBLISH
+====================================================
+
+Esta atualização parte da 1.2.0 já funcional e aplica o refinamento visual aprovado.
+
+ARQUIVOS DE RUNTIME
+-------------------
+1. Substitua jarvis_version.py
+2. Adicione jarvis_release_121_bootstrap.py
+3. requirements.txt é idêntico ao da 1.2.0; pode substituir para manter o pacote consistente.
+
+PRINCIPAIS MUDANCAS
+-------------------
+- Tipografia Segoe UI maior e muito mais legível.
+- Ícones próprios desenhados em 5x com antialiasing; nenhum emoji é usado como ícone da interface.
+- Máscara/helmet original do JARVIS ao lado do nome e nas respostas.
+- Sidebar maior e mais simples, no estilo aprovado.
+- Botão de atualização azul no canto superior direito, somente ícone; pulsa quando existe release pendente.
+- Botão Copiar relatório na sidebar: copia conversa + status + logs para diagnóstico.
+- Composer maior: +, Pergunte ao JARVIS..., modo, microfone e enviar.
+- Scroll do chat mais rápido e responsivo para mouse e touchpad.
+- Mensagens com fonte maior; botões Copiar/Repetir maiores.
+- Screenshot aparece como card com Abrir pasta e Copiar caminho.
+- CPU/RAM/Rede não aparecem na interface principal.
+- Command Center não existe.
+
+OBSERVACAO
+----------
+A nitidez final depende também da escala configurada no Windows, mas a interface usa o modo DPI-aware do JARVIS e os ícones são renderizados em resolução superior para evitar ampliação pixelada.
+
+
+REVISAO DE COMPATIBILIDADE - AINDA E A MESMA 1.2.1
+---------------------------------------------------
+- Mantém VERSION=1.2.1.
+- Windows sem driver CUDA usa Whisper CPU/int8 automaticamente.
+- Intel UHD 630/620/530 e outras iGPUs não são tratadas como CUDA.
+- Número de threads é ajustado automaticamente conforme a CPU.
+- Primeiro acesso Gemini recebe tolerância adicional para DNS/TLS/rede.
+- Instalação nova sem chave Gemini mostra uma mensagem clara no chat.
+- Chaves seguras são tratadas como específicas daquele PC/usuário Windows.
+- Nenhuma chave é copiada de outro computador.

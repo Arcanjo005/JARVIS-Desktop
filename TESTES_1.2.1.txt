@@ -1,0 +1,26 @@
+TESTES VISUAIS JARVIS 1.2.1
+============================
+
+1. Abra o JARVIS e confirme o helmet ao lado de JARVIS.
+2. Confirme que nenhuma opção da sidebar usa emoji.
+3. Recolha/expanda a sidebar e confira a nitidez dos ícones.
+4. Role uma conversa longa com roda do mouse e touchpad.
+5. Clique em Copiar relatório e cole no Bloco de Notas; deve conter conversa/status/logs.
+6. Clique no + e confira o painel de ações grandes.
+7. Digite uma mensagem longa; o composer deve crescer.
+8. Envie "tira um print"; confira o card do screenshot.
+9. Clique no botão circular de atualizar no topo direito.
+10. Se houver atualização disponível, o botão deve pulsar em azul.
+11. Confira fontes em 100%, 125% e 150% da escala do Windows se possível.
+
+
+TESTE DE COMPATIBILIDADE EM OUTRO PC / WINDOWS 11
+--------------------------------------------------
+1. Abrir JARVIS e digitar: eai
+2. Digitar: status do pc
+3. Digitar: o que e memoria ram
+4. Digitar: qual a diferenca entre SSD e HD
+5. Se a IA não estiver configurada, o JARVIS deve avisar claramente e indicar Configurações.
+6. Configurar a chave Gemini naquele PC e repetir o teste.
+7. Em PC Intel UHD sem NVIDIA/CUDA, o modo de STT deve usar CPU/int8.
+8. A interface não deve congelar enquanto a IA online inicializa.

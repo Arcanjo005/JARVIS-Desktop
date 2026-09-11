@@ -1,32 +1,27 @@
 {
-  "version": "1.2.0",
-  "build": "2026.09.10-chatcore.1",
-  "base": "v1.1.2",
+  "version": "1.2.1",
+  "build": "2026.09.10-ui-polish.2-compat",
+  "revision": "same-1.2.1-cross-pc-compatibility",
   "files": [
     {
-      "path": "CHANGELOG_1.2.0.txt",
-      "size": 795,
-      "sha256": "c236796177157369dc0efddf691fde2c266a501a88ac2269f64236a34326eac7"
-    },
-    {
       "path": "LEIA_ANTES_DE_PUBLICAR.txt",
-      "size": 2651,
-      "sha256": "3dd655b4974bbb2e01fa7d2a532c4c15320d1c513b4a89c9f053cb7d623d048a"
+      "size": 2093,
+      "sha256": "79fbbac23ed0f0245a809448001c2b8a52c876fc48b48f1c0c7581186501d5a0"
     },
     {
-      "path": "TESTES_1.2.0.txt",
-      "size": 1128,
-      "sha256": "33bbb9ac81217d30205649099f3291c924c40e995a8a8e3898e18548d6976339"
+      "path": "TESTES_1.2.1.txt",
+      "size": 1275,
+      "sha256": "f4c758f39df7ee4a032f1f0817ac1f6ba9dbb57d460b595bcd2a1cdbaff73e51"
     },
     {
-      "path": "jarvis_release_120_bootstrap.py",
-      "size": 71446,
-      "sha256": "6e560e95deb25942b2cbe1e34ac9c53b1cc362c748c380ac3ccaa73a10d69683"
+      "path": "jarvis_release_121_bootstrap.py",
+      "size": 88664,
+      "sha256": "59b140e04d2fef52139a41fe3789225abfd615b115a72fc98737f4f3d2c0c86c"
     },
     {
       "path": "jarvis_version.py",
-      "size": 763,
-      "sha256": "be3aa0eb2fdee92f7274b28912b8b5b8f36daa6be8bacbf68cbec9ddd8614840"
+      "size": 771,
+      "sha256": "e273814649402ddf7500be6cac400542e41425356b09d5bc8c9698b99828bc28"
     },
     {
       "path": "requirements.txt",

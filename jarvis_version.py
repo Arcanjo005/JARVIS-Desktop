@@ -1,15 +1,15 @@
 """Canonical public version identity for JARVIS Desktop."""
 from jarvis_identity import PUBLIC_NAME, WAKE_NAME, LEGACY_NAME
 
-VERSION = "1.2.0"
-BUILD = "2026.09.10-chatcore.1"
+VERSION = "1.2.1"
+BUILD = "2026.09.10-ui-polish.2-compat"
 CHANNEL = "stable"
 INTERNAL_NAME = "JARVIS"
 
 # Chat Core, reliability and UX fixes are installed through a small compatibility layer so the
 # known-good v1.1.2 startup architecture remains untouched.
 try:
-    from jarvis_release_120_bootstrap import install as _install_release_layer
+    from jarvis_release_121_bootstrap import install as _install_release_layer
     _install_release_layer()
 except Exception:
     # Version identity must never become a startup dependency.
