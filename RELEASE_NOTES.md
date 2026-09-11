@@ -1,13 +1,11 @@
-# JARVIS Desktop 1.2.9 — Esfera 3D giratória restaurada
+# JARVIS Desktop 1.2.10 — Esfera Beta 3D restaurada exatamente
 
-- Remove o visual antigo `core`/reator com círculos concêntricos que voltou a aparecer indevidamente.
-- Restaura como padrão a esfera 3D giratória do renderer principal do JARVIS, com volume, reflexos, partículas orbitais e animação contínua.
-- Configurações antigas salvas como `core` são migradas automaticamente para `crystal` para que a esfera velha não reapareça após atualizar.
-- Retira `core` das opções visuais expostas ao usuário.
-- Impede o overlay Qt antigo de assumir prioridade sobre a esfera 3D aprovada.
-- Mantém os estados visuais sincronizados com o VoiceEngine: `OCIOSO`, `OUVINDO`, `ENTENDENDO`, `PENSANDO`, `EXECUTANDO` e `FALANDO`.
-- Em modo ocioso a esfera permanece em repouso; não fica presa em `OUVINDO` só porque o modo conversa está ativo.
-- Mantém as correções da 1.2.8 para interface de conversas, áudio moderno, Hot Runtime e diagnóstico.
+- Usa o ZIP da versão beta fornecido pelo usuário como referência visual real.
+- Restaura o renderer PIL/Tk `core` da beta, que é diferente do `core` Qt/reator que apareceu nas versões recentes.
+- A esfera volta a ter iluminação volumétrica por pixel, brilho especular, profundidade, flutuação, rotação do corpo, partícula orbital e animações por estado.
+- Desativa o renderer Qt/reator antigo para ele não substituir novamente a esfera correta.
+- Mantém o VoiceEngine moderno e os estados `OCIOSO`, `OUVINDO`, `PENSANDO`, `EXECUTANDO`, `FALANDO` e `ERRO` sincronizados com a atividade real.
+- Mantém as melhorias recentes de interface de conversas, copiar conversa completa, áudio, diagnóstico e Hot Runtime.
 
-Versão: 1.2.9
+Versão: 1.2.10
 Canal: stable
