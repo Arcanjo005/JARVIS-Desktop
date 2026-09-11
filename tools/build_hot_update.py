@@ -17,6 +17,7 @@ RUNTIME_API = 1
 EXCLUDED_TOP_LEVEL = {
     "main.py",
     "hot_update_runtime.py",
+    "hot_update_runtime_core.py",
     "jarvis_desktop_selftest.py",
     "jarvis_build16_selftest.py",
     "jarvis_v8_selftest.py",
