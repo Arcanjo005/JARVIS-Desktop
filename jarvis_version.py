@@ -1,8 +1,8 @@
 """Canonical public version identity for JARVIS Desktop."""
 from jarvis_identity import PUBLIC_NAME, WAKE_NAME, LEGACY_NAME
 
-VERSION = "1.2.11"
-BUILD = "2026.09.11-orb-rebrand-audio-recovery.1"
+VERSION = "1.2.12"
+BUILD = "2026.09.11-single-orb-cinema-subtitles.1"
 CHANNEL = "stable"
 INTERNAL_NAME = "JARVIS"
 
