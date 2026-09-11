@@ -1,14 +1,13 @@
-# JARVIS Desktop 1.2.6 — Conversas na lateral e exportação completa
+# JARVIS Desktop 1.2.7 — Interface de conversas realmente ativada
 
-- Transforma a lateral esquerda em um painel dedicado às conversas, no estilo ChatGPT: nova conversa, busca e histórico ficam juntos e sempre visíveis.
-- Remove da lateral a telemetria e os controles que já existem no menu de três pontos, evitando duplicação visual.
+- Corrige a falha da 1.2.6 em que o instalador era publicado com a nova camada de interface no repositório, mas o entrypoint continuava importando `gui.JarvisGUI`.
+- O build agora troca e valida explicitamente o entrypoint para `gui_conversation_shell.JarvisGUI` antes do PyInstaller.
+- A lateral esquerda fica dedicada às conversas: nova conversa, busca e histórico salvos.
+- Remove da lateral telemetria e atalhos duplicados que já pertencem ao menu de três pontos.
 - Mantém Diagnóstico, Logs, Memórias, Contexto, Rotinas, Esfera e demais controles no menu `⋮`.
-- Mantém o histórico salvo no banco local e permite alternar rapidamente entre conversas existentes.
-- O botão no canto superior direito passa a se chamar `COPIAR CONVERSA` e copia a conversa ativa inteira, não apenas o que está renderizado na tela.
-- A cópia inclui versão, build, título da conversa, ID, data da exportação, quantidade de mensagens, remetente, horário e conteúdo de cada mensagem.
-- O relatório copiado fica pronto para colar diretamente no ChatGPT para análise e diagnóstico.
-- A exportação lê diretamente o banco da conversa, então continua completa mesmo quando mensagens antigas não estão renderizadas por causa de limites de desempenho da interface.
-- Preserva as correções da 1.2.5 para Hot Runtime antigo, histórico, diagnóstico de versão efetiva e carregamento sob demanda da voz.
+- O botão superior direito `COPIAR CONVERSA` copia a conversa ativa inteira diretamente do banco, pronta para colar no ChatGPT como relatório.
+- A exportação inclui versão, build, título, ID, horário, remetentes e conteúdo de cada mensagem.
+- O workflow falha antes de compilar se o novo shell de conversas não estiver realmente ligado ao entrypoint, evitando publicar novamente uma versão com interface antiga.
 
-Versão: 1.2.6
+Versão: 1.2.7
 Canal: stable
