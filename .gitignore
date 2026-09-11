@@ -1,0 +1,38 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build/runtime output
+release/
+dist/
+build/pyinstaller/
+build/pyinstaller_hooks/
+build/JARVIS.spec
+build/version_info.txt
+
+# Local JARVIS state
+*.log
+*.tmp
+*.download
+data/*.db
+data/*.db-shm
+data/*.db-wal
+logs/
+screenshots/
+
+# Local secrets / environment
+.env
+.env.*
+!.env.example
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
