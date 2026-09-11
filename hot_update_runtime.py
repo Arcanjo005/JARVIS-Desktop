@@ -1,8 +1,8 @@
 """Protected JARVIS hot-runtime bootstrap.
 
-The stable implementation lives in ``hot_update_runtime_core``.  This protected
+The stable implementation lives in ``hot_update_runtime_core``. This protected
 wrapper adds one important compatibility rule: a hot runtime from an older
-JARVIS release must never override a newer full installer.  That prevents stale
+JARVIS release must never override a newer full installer. That prevents stale
 GUI/runtime Python files in %LOCALAPPDATA% from winning over the freshly
 installed executable.
 
@@ -17,6 +17,10 @@ import sys
 from pathlib import Path
 
 import hot_update_runtime_core as _core
+
+# The implementation core is bootstrap code too: reject it even if somebody
+# hand-builds a ZIP instead of using tools/build_hot_update.py.
+_core.PROTECTED_HOT_PATHS.add("hot_update_runtime_core.py")
 
 # Re-export the public bootstrap API expected by the application and selftests.
 HOT_RUNTIME_API = _core.HOT_RUNTIME_API
