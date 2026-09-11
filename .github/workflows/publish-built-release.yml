@@ -1,0 +1,84 @@
+name: Publish Existing JARVIS Build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/release-request.json"
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: jarvis-publish-existing-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Baixar projeto
+        uses: actions/checkout@v7
+
+      - name: Resolver pedido de release
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          request = json.loads(Path('.github/release-request.json').read_text(encoding='utf-8'))
+          version = str(request['version']).strip()
+          run_id = str(request['run_id']).strip()
+          target_sha = str(request['target_sha']).strip()
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+              env.write(f'RELEASE_VERSION={version}\n')
+              env.write(f'SOURCE_RUN_ID={run_id}\n')
+              env.write(f'TARGET_SHA={target_sha}\n')
+          PY
+
+      - name: Baixar instalador já compilado
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p release
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --name "JARVIS-Desktop-$RELEASE_VERSION" \
+            --dir release
+          test -f "release/JARVIS_Setup_${RELEASE_VERSION}.exe"
+          test -f "release/JARVIS_Setup_${RELEASE_VERSION}.exe.sha256"
+
+      - name: Publicar Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v$RELEASE_VERSION"
+          if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $tag já existe; atualizando assets."
+          else
+            gh release create "$tag" \
+              --repo "${{ github.repository }}" \
+              --draft \
+              --target "$TARGET_SHA" \
+              --title "JARVIS Desktop $RELEASE_VERSION" \
+              --notes-file RELEASE_NOTES.md
+          fi
+
+          gh release upload "$tag" \
+            "release/JARVIS_Setup_${RELEASE_VERSION}.exe" \
+            "release/JARVIS_Setup_${RELEASE_VERSION}.exe.sha256" \
+            --repo "${{ github.repository }}" \
+            --clobber
+
+          gh release edit "$tag" \
+            --repo "${{ github.repository }}" \
+            --draft=false \
+            --latest
