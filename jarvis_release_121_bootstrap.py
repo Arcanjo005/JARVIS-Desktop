@@ -23,7 +23,12 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-RELEASE_LAYER = "1.2.1-ui-polish2-compat"
+try:
+    from jarvis_compatibility import get_compatibility_manager
+except Exception:
+    get_compatibility_manager = None
+
+RELEASE_LAYER = "1.2.1-ui-polish2-adaptive"
 
 _ORIGINAL_IMPORT = builtins.__import__
 _IMPORT_WRAPPED = False
@@ -31,68 +36,13 @@ _APPLYING = False
 _PATCHED = set()
 
 
-_MACHINE_COMPAT = {}
-
-
-def _apply_machine_compatibility() -> None:
-    """Conservative cross-PC defaults for Windows.
-
-    Public version remains 1.2.1. Explicit user settings always win.
-    """
-    global _MACHINE_COMPAT
-    info = {
-        "windows": os.name == "nt",
-        "cpu_threads": max(1, int(os.cpu_count() or 1)),
-        "cuda_driver": False,
-        "whisper_device": "auto",
-        "whisper_compute": "auto",
-        "profile": "default",
-    }
-    if os.name != "nt":
-        _MACHINE_COMPAT = info
-        return
-
-    cuda_driver = False
+def _compat_manager():
     try:
-        import ctypes
-        ctypes.WinDLL("nvcuda.dll")
-        cuda_driver = True
+        if callable(get_compatibility_manager):
+            return get_compatibility_manager()
     except Exception:
-        cuda_driver = False
-
-    cpu_count = max(1, int(os.cpu_count() or 1))
-    safe_threads = max(2, min(6, cpu_count // 2 if cpu_count >= 4 else cpu_count))
-    os.environ.setdefault("OMP_NUM_THREADS", str(safe_threads))
-    os.environ.setdefault("MKL_NUM_THREADS", str(safe_threads))
-    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-
-    if not cuda_driver:
-        # Intel UHD / AMD integrated graphics are not CUDA devices.
-        os.environ.setdefault("JARVIS_WHISPER_DEVICE", "cpu")
-        os.environ.setdefault("JARVIS_WHISPER_COMPUTE_TYPE", "int8")
-        os.environ.setdefault("JARVIS_WHISPER_MODEL", "base")
-        os.environ.setdefault("JARVIS_WHISPER_SECOND_PASS", "0")
-        profile = "windows-cpu-safe"
-    else:
-        profile = "windows-cuda-auto"
-
-    # First connection on a different PC can be slower because of DNS/TLS.
-    os.environ.setdefault("JARVIS_GEMINI_SOFT_FIRST_TOKEN_MS", "3000")
-    os.environ.setdefault("JARVIS_GEMINI_FIRST_TOKEN_MS", "7500")
-    os.environ.setdefault("JARVIS_GEMINI_TOTAL_MS", "14000")
-
-    info.update(
-        cuda_driver=bool(cuda_driver),
-        whisper_device=os.environ.get("JARVIS_WHISPER_DEVICE", "auto"),
-        whisper_compute=os.environ.get("JARVIS_WHISPER_COMPUTE_TYPE", "auto"),
-        profile=profile,
-        safe_threads=safe_threads,
-    )
-    _MACHINE_COMPAT = info
-
-
-_apply_machine_compatibility()
-
+        pass
+    return None
 
 
 def _pyinstaller_collect_dynamic_modules():
@@ -113,6 +63,7 @@ def _pyinstaller_collect_dynamic_modules():
     import behavior_memory  # noqa: F401
     import performance_tracer  # noqa: F401
     import voice_engine  # noqa: F401
+    import jarvis_compatibility  # noqa: F401
     import context_engine  # noqa: F401
     import send2trash  # noqa: F401
     import yt_dlp  # noqa: F401
@@ -236,6 +187,28 @@ def _patch_router() -> None:
         if key in media_phrases:
             return local("v8:release_media:" + media_phrases[key], "PLAYER_CONTROL")
 
+        # Adaptive compatibility can be inspected/changed from chat without
+        # touching Gemini or the main response pipeline.
+        if key in {
+            "compatibilidade", "status de compatibilidade", "modo de compatibilidade",
+            "como esta a compatibilidade", "perfil deste pc", "perfil do pc",
+        }:
+            return local("v8:compat_status", "COMPATIBILITY")
+        if key in {
+            "compatibilidade automatica", "modo de compatibilidade automatico",
+            "usar compatibilidade automatica", "modo automatico de compatibilidade",
+        }:
+            return local("v8:compat_mode:auto", "COMPATIBILITY")
+        if key in {
+            "modo desempenho", "compatibilidade desempenho", "usar modo desempenho",
+        }:
+            return local("v8:compat_mode:performance", "COMPATIBILITY")
+        if key in {
+            "compatibilidade maxima", "modo compatibilidade maxima",
+            "usar compatibilidade maxima", "modo seguro",
+        }:
+            return local("v8:compat_mode:safe", "COMPATIBILITY")
+
         return original(text)
 
     mod.route = patched_route
@@ -345,38 +318,10 @@ def _patch_core() -> None:
     # Typed questions in the field occasionally hit a stuck Gemini stream. The
     # stable build retried only voice questions; text now gets one retry too.
     try:
-        cls.FIRST_TOKEN_TIMEOUT_MS = max(int(getattr(cls, "FIRST_TOKEN_TIMEOUT_MS", 5600)), 7500)
-        cls.TOTAL_RESPONSE_TIMEOUT_MS = max(int(getattr(cls, "TOTAL_RESPONSE_TIMEOUT_MS", 9000)), 14000)
+        cls.FIRST_TOKEN_TIMEOUT_MS = max(int(getattr(cls, "FIRST_TOKEN_TIMEOUT_MS", 5600)), 7000)
+        cls.TOTAL_RESPONSE_TIMEOUT_MS = max(int(getattr(cls, "TOTAL_RESPONSE_TIMEOUT_MS", 9000)), 12000)
     except Exception:
         pass
-
-    original_prewarm = getattr(cls, "prewarm", None)
-    if callable(original_prewarm):
-        def prewarm(self):
-            try:
-                if not getattr(self, "api_key", None):
-                    self._load_api_key()
-            except Exception:
-                pass
-            return original_prewarm(self)
-        cls.prewarm = prewarm
-
-    original_status = getattr(cls, "get_api_status", None)
-    if callable(original_status):
-        def get_api_status(self):
-            try:
-                data = dict(original_status(self) or {})
-            except Exception:
-                data = {}
-            data.update({
-                "compatibility_profile": str(_MACHINE_COMPAT.get("profile") or "default"),
-                "cuda_driver": bool(_MACHINE_COMPAT.get("cuda_driver")),
-                "whisper_device": str(_MACHINE_COMPAT.get("whisper_device") or "auto"),
-                "whisper_compute": str(_MACHINE_COMPAT.get("whisper_compute") or "auto"),
-                "cpu_threads": int(_MACHINE_COMPAT.get("cpu_threads") or 1),
-            })
-            return data
-        cls.get_api_status = get_api_status
 
     original_stream = getattr(cls, "process_message_stream", None)
     if callable(original_stream):
@@ -444,36 +389,13 @@ def _patch_core() -> None:
     original_degraded = getattr(cls, "_local_degraded_response", None)
     if callable(original_degraded):
         def degraded_response(self, message, source="text"):
-            # Secure settings on Windows are machine/user scoped. A copied
-            # installation must not silently look frozen when no usable key
-            # exists on the new PC.
-            if not getattr(self, "api_key", None):
-                return (
-                    "A IA online ainda não está configurada neste computador. "
-                    "Abra Configurações do JARVIS e configure a chave Gemini deste PC. "
-                    "Os comandos locais continuam funcionando normalmente."
-                )
-            try:
-                if callable(getattr(self, "has_auth_error", None)) and self.has_auth_error():
-                    detail = str(getattr(self, "auth_error_message", "") or "").strip()
-                    return detail or (
-                        "A chave Gemini deste computador não foi aceita. "
-                        "Abra Configurações e salve novamente a chave da IA."
-                    )
-            except Exception:
-                pass
-
             result = original_degraded(self, message, source=source)
             key = _norm(result)
             if str(source or "text").lower() == "text" and (
                 "entendi sua pergunta mas nao consegui concluir a resposta neste turno" in key
                 or "entendi a mensagem mas nao consegui concluir a resposta neste turno" in key
             ):
-                return (
-                    "A IA online não respondeu a tempo neste turno. "
-                    "Sua mensagem foi entendida. A conexão será renovada automaticamente; "
-                    "tente novamente em alguns segundos."
-                )
+                return "A IA online não respondeu a tempo neste turno. Sua mensagem foi entendida; tente novamente em alguns segundos."
             return result
         cls._local_degraded_response = degraded_response
 
@@ -487,6 +409,24 @@ def _patch_voice_engine() -> None:
     error_cls = getattr(mod, "VoiceEngineError", RuntimeError)
     if cls is None:
         return
+
+    compatibility = _compat_manager()
+    try:
+        voice_policy = compatibility.voice_policy() if compatibility is not None else {}
+    except Exception:
+        voice_policy = {}
+    # Only replace automatic/default voice choices. Explicit user settings win.
+    try:
+        if str(getattr(cls, "WHISPER_DEVICE", "auto") or "auto").strip().lower() in {"", "auto"}:
+            cls.WHISPER_DEVICE = str(voice_policy.get("whisper_device") or "auto")
+        if str(getattr(cls, "WHISPER_COMPUTE_TYPE", "auto") or "auto").strip().lower() in {"", "auto"}:
+            cls.WHISPER_COMPUTE_TYPE = str(voice_policy.get("whisper_compute") or "auto")
+        if str(getattr(cls, "WHISPER_MODEL", "base") or "base").strip().lower() in {"", "auto", "balanced"}:
+            cls.WHISPER_MODEL = str(voice_policy.get("whisper_model") or "base")
+        if voice_policy.get("mode") == "safe":
+            cls.WHISPER_SECOND_PASS = False
+    except Exception:
+        pass
 
     def detect_microphone(self):
         """Prefer stable host APIs/native rates and prove the stream can open."""
@@ -534,16 +474,36 @@ def _patch_voice_engine() -> None:
                 score -= 20
             if any(word in lname for word in ("microphone", "microfone", "mic ", "headset", "usb", "logitech")):
                 score -= 22
-            # WDM-KS was the host that repeatedly rejected 16 kHz in the field
-            # diagnostics. Prefer WASAPI/MME/DirectSound copies when available.
-            if "wdm-ks" in api_key or "wdm ks" in api_key:
-                score += 95
+            # Machine-local policy prefers stable Windows APIs and remembers
+            # the endpoint that proved itself on this PC. WDM-KS remains only
+            # as a last resort because some drivers expose nothing else.
+            try:
+                audio_policy = compatibility.audio_policy() if compatibility is not None else {}
+            except Exception:
+                audio_policy = {}
+            penalties = dict(audio_policy.get("host_penalty") or {})
+            matched_penalty = None
+            for host_key, penalty in penalties.items():
+                if str(host_key).lower() in api_key:
+                    matched_penalty = int(penalty)
+                    break
+            if matched_penalty is not None:
+                score += matched_penalty
             elif "wasapi" in api_key:
-                score -= 12
+                score -= 20
             elif "directsound" in api_key:
-                score -= 4
+                score -= 8
             elif "mme" in api_key:
-                score += 6
+                score += 2
+            elif "wdm-ks" in api_key or "wdm ks" in api_key:
+                score += 120
+
+            last_device = _norm(audio_policy.get("last_good_device") or "")
+            last_host = _norm(audio_policy.get("last_good_hostapi") or "")
+            if last_device and last_device == _norm(name):
+                score -= 70
+            if last_host and last_host == _norm(api_name):
+                score -= 30
             candidates.append((score, index, name, api_name, device))
 
         candidates.sort(key=lambda row: (row[0], row[1]))
@@ -559,7 +519,23 @@ def _patch_voice_engine() -> None:
             except Exception:
                 native = 0
             rates = []
-            for rate in (native, 48000, 44100, self.SAMPLE_RATE):
+            try:
+                audio_policy = compatibility.audio_policy() if compatibility is not None else {}
+            except Exception:
+                audio_policy = {}
+            last_rate = int(audio_policy.get("last_good_rate") or 0)
+            last_device = _norm(audio_policy.get("last_good_device") or "")
+            preferred = []
+            if last_rate > 0 and last_device and last_device == _norm(name):
+                preferred.append(last_rate)
+            preferred.append(native)
+            preferred.extend(audio_policy.get("fallback_rates") or (48000, 44100, self.SAMPLE_RATE))
+            preferred.append(self.SAMPLE_RATE)
+            for rate in preferred:
+                try:
+                    rate = int(rate)
+                except Exception:
+                    continue
                 if rate > 0 and rate not in rates:
                     rates.append(rate)
             for rate in rates:
@@ -610,6 +586,11 @@ def _patch_voice_engine() -> None:
                     "info",
                     f"Microfone validado: {name} (#{index}, {api_name or 'host'}, {rate} Hz).",
                 )
+                try:
+                    if compatibility is not None:
+                        compatibility.record_audio_success(name, api_name, rate)
+                except Exception:
+                    pass
                 return
 
         detail = " | ".join(errors[-5:]) if errors else "nenhum stream pôde ser aberto"
@@ -619,6 +600,11 @@ def _patch_voice_engine() -> None:
             f"Detalhe: {detail}"
         )
         self._log("warning", self.last_error)
+        try:
+            if compatibility is not None:
+                compatibility.record_audio_failure(self.last_error)
+        except Exception:
+            pass
 
     def ensure_vosk_model(self):
         """Transactional Vosk model download with validation and isolated temp files."""
@@ -642,7 +628,7 @@ def _patch_voice_engine() -> None:
         try:
             request = urllib.request.Request(
                 self.VOSK_MODEL_URL,
-                headers={"User-Agent": "JARVIS-Desktop/1.2.0"},
+                headers={"User-Agent": "JARVIS-Desktop/1.2.1"},
             )
             with urllib.request.urlopen(request, timeout=60) as response, temp_path.open("wb") as output:
                 while True:
@@ -707,6 +693,25 @@ def _patch_voice_engine() -> None:
 
     cls._detect_microphone = detect_microphone
     cls._ensure_vosk_model = ensure_vosk_model
+    original_status = getattr(cls, "status", None)
+    if callable(original_status):
+        def status(self):
+            data = original_status(self)
+            if not isinstance(data, dict):
+                data = {}
+            try:
+                manager = _compat_manager()
+                if manager is not None:
+                    comp = manager.status()
+                    data["compatibility_mode"] = comp.get("mode")
+                    data["compatibility_effective_mode"] = comp.get("effective_mode")
+                    data["compatibility_safe_boot"] = bool(comp.get("safe_boot"))
+                    data["compatibility_cuda_driver"] = bool(comp.get("cuda_driver"))
+                    data["compatibility_voice_policy"] = dict(comp.get("voice") or {})
+            except Exception:
+                pass
+            return data
+        cls.status = status
     _PATCHED.add("voice")
 
 
@@ -780,6 +785,32 @@ def _patch_gui() -> None:
     if callable(original_execute):
         def execute(self, command: str):
             command = " ".join(str(command or "").split()).strip()
+
+            if command == "v8:compat_status":
+                try:
+                    manager = _compat_manager()
+                    if manager is None:
+                        raise RuntimeError("gerenciador indisponível")
+                    return _local_outcome(self, manager.summary_text(), True, True)
+                except Exception as exc:
+                    return _local_outcome(self, f"Não consegui ler o perfil de compatibilidade: {exc}", False, False)
+
+            if command.startswith("v8:compat_mode:"):
+                try:
+                    requested = command.rsplit(":", 1)[1].strip().lower()
+                    manager = _compat_manager()
+                    if manager is None:
+                        raise RuntimeError("gerenciador indisponível")
+                    selected = manager.set_mode(requested)
+                    labels = {
+                        "auto": "Automática",
+                        "performance": "Desempenho",
+                        "safe": "Compatibilidade máxima",
+                    }
+                    note = " A nova política será aplicada aos componentes na próxima inicialização."
+                    return _local_outcome(self, f"Compatibilidade definida como {labels.get(selected, selected)}.{note}", True, True)
+                except Exception as exc:
+                    return _local_outcome(self, f"Não consegui alterar o modo de compatibilidade: {exc}", False, False)
 
             if command == "v8:clarify_folder_name":
                 return _local_outcome(
@@ -1223,7 +1254,15 @@ def _patch_gui() -> None:
     def _v121_copy_diagnostic(self):
         try:
             self._copy_everything()
-            self.add_message("JARVIS", "Relatório copiado: conversa, status e logs estão na área de transferência.", is_jarvis=True)
+            try:
+                manager = _compat_manager()
+                if manager is not None:
+                    current = str(self.root.clipboard_get() or "")
+                    combined = current.rstrip() + "\n\n" + manager.summary_text() + "\n"
+                    self._copy_to_clipboard(combined)
+            except Exception:
+                pass
+            self.add_message("JARVIS", "Relatório copiado: conversa, status, compatibilidade e logs estão na área de transferência.", is_jarvis=True)
         except Exception as exc:
             try:
                 self._copy_to_clipboard(self._conversation_as_text())
@@ -1671,6 +1710,12 @@ def _patch_gui() -> None:
         def __init__(self,*args,**kwargs):
             original_init(self,*args,**kwargs)
             try:
+                manager = _compat_manager()
+                if manager is not None:
+                    manager.mark_boot_ready()
+            except Exception:
+                pass
+            try:
                 self.root.title("JARVIS")
                 self.root.geometry("1440x900")
                 self.root.minsize(1100,720)
@@ -1712,6 +1757,12 @@ def _apply_loaded_patches() -> None:
 def install() -> None:
     """Install import-time patch hooks once."""
     global _IMPORT_WRAPPED
+    try:
+        manager = _compat_manager()
+        if manager is not None:
+            manager.begin_boot()
+    except Exception:
+        pass
     if _IMPORT_WRAPPED:
         _apply_loaded_patches()
         return
