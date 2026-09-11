@@ -1,8 +1,8 @@
 """Canonical public version identity for JARVIS Desktop."""
 from jarvis_identity import PUBLIC_NAME, WAKE_NAME, LEGACY_NAME
 
-VERSION = "1.2.14"
-BUILD = "2026.09.11-windows-mic-recovery.1"
+VERSION = "1.2.15"
+BUILD = "2026.09.11-conversation-ui-rebrand.1"
 CHANNEL = "stable"
 INTERNAL_NAME = "JARVIS"
 
