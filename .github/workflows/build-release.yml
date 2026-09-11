@@ -6,7 +6,7 @@ on:
       version:
         description: "Versão do JARVIS"
         required: true
-        default: "1.2.5"
+        default: "1.2.7"
   push:
     branches:
       - main
@@ -46,6 +46,29 @@ jobs:
             throw "Versão inválida: '$version'"
           }
           "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Ativar interface de conversas
+        shell: powershell
+        run: |
+          $mainPath = "main.py"
+          $main = Get-Content -LiteralPath $mainPath -Raw
+          $old = "from gui import JarvisGUI"
+          $new = "from gui_conversation_shell import JarvisGUI"
+          if (-not $main.Contains($old) -and -not $main.Contains($new)) {
+            throw "Entry point do JARVIS não contém um import de GUI reconhecido."
+          }
+          if ($main.Contains($old)) {
+            $main = $main.Replace($old, $new)
+            Set-Content -LiteralPath $mainPath -Value $main -Encoding utf8
+          }
+          $verified = Get-Content -LiteralPath $mainPath -Raw
+          if (-not $verified.Contains($new)) {
+            throw "Falha ao ativar gui_conversation_shell no entry point."
+          }
+          if (-not (Test-Path -LiteralPath "gui_conversation_shell.py")) {
+            throw "gui_conversation_shell.py ausente."
+          }
+          Write-Host "[JARVIS] Entry point confirmado: gui_conversation_shell.JarvisGUI"
 
       - name: Preparar Python para compilacao
         uses: actions/setup-python@v7
