@@ -1,16 +1,13 @@
 """Protected JARVIS hot-runtime bootstrap.
 
-The stable implementation lives in ``hot_update_runtime_core``. This protected
-wrapper adds one important compatibility rule: a hot runtime from an older
-JARVIS release must never override a newer full installer. That prevents stale
-GUI/runtime Python files in %LOCALAPPDATA% from winning over the freshly
-installed executable.
-
-The core keeps the immutable-release errors for "conteúdo diferente" and
-"novo número de versão" used by the distribution regression guards.
+The stable implementation lives in ``hot_update_runtime_core``. This wrapper
+prevents an older per-user runtime from overriding a newer full installer and,
+critically, determines the bundled version without importing application
+modules before the hot runtime has had a chance to win ``sys.path``.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -18,11 +15,8 @@ from pathlib import Path
 
 import hot_update_runtime_core as _core
 
-# The implementation core is bootstrap code too: reject it even if somebody
-# hand-builds a ZIP instead of using tools/build_hot_update.py.
 _core.PROTECTED_HOT_PATHS.add("hot_update_runtime_core.py")
 
-# Re-export the public bootstrap API expected by the application and selftests.
 HOT_RUNTIME_API = _core.HOT_RUNTIME_API
 MANIFEST_NAME = _core.MANIFEST_NAME
 ACTIVE_NAME = _core.ACTIVE_NAME
@@ -48,13 +42,22 @@ def _version_key(value: object) -> tuple[int, int, int]:
     return tuple(int(part) for part in match.groups())
 
 
-def _bundled_version() -> str:
-    """Return the version embedded in the full installer, before hot sys.path."""
+def _bundled_version(app_dir: Path | str | None = None) -> str:
+    """Read the installer version without importing ``jarvis_version``.
+
+    ``jarvis_version`` installs compatibility hooks as an import side effect.
+    Importing it before the hot runtime is activated contaminates normal boot
+    and can make an old bundled GUI win even when a newer runtime exists.
+    ``prepare_release.py`` writes the shipped base version to update_config.json,
+    so that file is the side-effect-free source of truth here.
+    """
     if not getattr(sys, "frozen", False):
         return ""
     try:
-        from jarvis_version import VERSION
-        return str(VERSION or "").strip()
+        base = Path(app_dir or os.environ.get("JARVIS_APP_DIR") or Path(sys.executable).resolve().parent)
+        payload = json.loads((base / "update_config.json").read_text(encoding="utf-8"))
+        value = str(payload.get("bootstrap_version") or "").strip()
+        return value if _VERSION_PARTS_RE.match(value) else ""
     except Exception:
         return ""
 
@@ -66,15 +69,13 @@ def _clear_hot_environment() -> None:
 
 def activate_hot_runtime(app_dir: Path | str, *, track_boot: bool = True):
     """Activate only a hot runtime that is not older than the installed bundle."""
-    bundled = _bundled_version()
+    bundled = _bundled_version(app_dir)
     if bundled:
         root = _core.runtime_store_dir()
         active = _core._read_json(root / _core.ACTIVE_NAME)
         hot_version = str(active.get("version") or "").strip()
         if hot_version and _version_key(hot_version) < _version_key(bundled):
-            _core._disable_active(
-                f"runtime {hot_version} anterior ao instalador {bundled}"
-            )
+            _core._disable_active(f"runtime {hot_version} anterior ao instalador {bundled}")
             try:
                 (root / _core.BOOTING_NAME).unlink(missing_ok=True)
             except Exception:
