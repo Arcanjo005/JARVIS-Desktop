@@ -1,9 +1,9 @@
 """Protected JARVIS hot-runtime bootstrap.
 
 The stable implementation lives in ``hot_update_runtime_core``. This wrapper
-prevents an older per-user runtime from overriding a newer full installer and,
-critically, determines the bundled version without importing application
-modules before the hot runtime has had a chance to win ``sys.path``.
+prevents an older or same-version per-user runtime from overriding a full
+installer and, critically, determines the bundled version without importing
+application modules before the hot runtime has had a chance to win ``sys.path``.
 """
 from __future__ import annotations
 
@@ -43,14 +43,7 @@ def _version_key(value: object) -> tuple[int, int, int]:
 
 
 def _bundled_version(app_dir: Path | str | None = None) -> str:
-    """Read the installer version without importing ``jarvis_version``.
-
-    ``jarvis_version`` installs compatibility hooks as an import side effect.
-    Importing it before the hot runtime is activated contaminates normal boot
-    and can make an old bundled GUI win even when a newer runtime exists.
-    ``prepare_release.py`` writes the shipped base version to update_config.json,
-    so that file is the side-effect-free source of truth here.
-    """
+    """Read the installer version without importing ``jarvis_version``."""
     if not getattr(sys, "frozen", False):
         return ""
     try:
@@ -68,14 +61,23 @@ def _clear_hot_environment() -> None:
 
 
 def activate_hot_runtime(app_dir: Path | str, *, track_boot: bool = True):
-    """Activate only a hot runtime that is not older than the installed bundle."""
+    """Activate only a hot runtime newer than the installed full bundle.
+
+    A full installer is authoritative for its own version. Older code already
+    handled ``hot < bundle``; the important recovery rule is also rejecting
+    ``hot == bundle``. Otherwise a stale same-version runtime left in
+    ``%LOCALAPPDATA%\\JARVIS\\runtime`` can keep shadowing freshly installed
+    files forever and make reinstalling appear ineffective.
+    """
     bundled = _bundled_version(app_dir)
     if bundled:
         root = _core.runtime_store_dir()
         active = _core._read_json(root / _core.ACTIVE_NAME)
         hot_version = str(active.get("version") or "").strip()
-        if hot_version and _version_key(hot_version) < _version_key(bundled):
-            _core._disable_active(f"runtime {hot_version} anterior ao instalador {bundled}")
+        if hot_version and _version_key(hot_version) <= _version_key(bundled):
+            _core._disable_active(
+                f"runtime {hot_version} substituido pelo instalador completo {bundled}"
+            )
             try:
                 (root / _core.BOOTING_NAME).unlink(missing_ok=True)
             except Exception:
