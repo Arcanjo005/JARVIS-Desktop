@@ -5,7 +5,8 @@ preventing obsolete GUI and audio monkey patches from overriding modern source.
 
 The voice overlay is a separate smooth 3D Qt process. If Qt is unavailable, the
 Tk/PIL fallback is deliberately throttled and yields to UI backlog so a visual
-animation can never monopolize the main Tk event loop again.
+animation can never monopolize the main Tk event loop again. When Qt is alive,
+any stale Tk fallback window is explicitly closed so only one orb can exist.
 """
 from __future__ import annotations
 
@@ -21,10 +22,9 @@ def _patch_current_gui() -> None:
         return
 
     original_render_orb_frame = getattr(cls, "_render_orb_frame", None)
+    original_setup_qt = getattr(cls, "_setup_qt_voice_overlay", None)
 
     def conversation_visual_lock_active(self) -> bool:
-        # Conversation mode changes size/captions only. The VoiceEngine remains
-        # authoritative for listening/thinking/speaking states.
         return False
 
     def sync_conversation_overlay_lock(self, enabled=None):
@@ -42,6 +42,37 @@ def _patch_current_gui() -> None:
             except Exception:
                 pass
         return active
+
+    def close_stale_tk_overlay(self):
+        overlay = getattr(self, "voice_overlay", None)
+        if overlay is not None:
+            try:
+                if overlay.winfo_exists():
+                    overlay.destroy()
+            except Exception:
+                pass
+        self.voice_overlay = None
+        self.voice_orb_canvas = None
+        self.voice_overlay_text_label = None
+        self.voice_overlay_state_label = None
+        job = getattr(self, "voice_orb_animation_job", None)
+        if job is not None and getattr(self, "root", None):
+            try:
+                self.root.after_cancel(job)
+            except Exception:
+                pass
+        self.voice_orb_animation_job = None
+        self._voice_orb_photo = None
+
+    def setup_qt_voice_overlay(self):
+        result = original_setup_qt(self) if callable(original_setup_qt) else None
+        controller = getattr(self, "qt_voice_overlay", None)
+        try:
+            if controller is not None and controller.is_alive():
+                close_stale_tk_overlay(self)
+        except Exception:
+            pass
+        return result
 
     def settle_voice_idle(self):
         if getattr(self, "_pending_confirmation", None) or getattr(self, "_voice_followup_after_tts", False):
@@ -79,14 +110,6 @@ def _patch_current_gui() -> None:
             pass
 
     def safe_tk_orb_animation(self):
-        """Emergency renderer that cannot saturate Tk's main loop.
-
-        1.2.10 rendered a full PIL frame and created a new Tk PhotoImage roughly
-        every 33 ms in the same thread that handles chat/clicks. That could be
-        smooth initially and later starve the event loop under accumulated UI
-        load. Qt is now the primary renderer; this path is only a bounded
-        fallback.
-        """
         self.voice_orb_animation_job = None
         if not getattr(self, "voice_visual_mode", False):
             return
@@ -95,10 +118,10 @@ def _patch_current_gui() -> None:
         if root is None or canvas is None:
             return
 
-        # If the isolated Qt renderer is alive, Tk must do zero animation work.
         controller = getattr(self, "qt_voice_overlay", None)
         try:
             if controller is not None and controller.is_alive():
+                close_stale_tk_overlay(self)
                 return
         except Exception:
             pass
@@ -109,8 +132,6 @@ def _patch_current_gui() -> None:
         except Exception:
             return
 
-        # Audio captions, history restoration and streaming responses have
-        # priority over an emergency visual animation.
         backlog = 0
         try:
             q = getattr(self, "_ui_event_queue", None)
@@ -130,8 +151,6 @@ def _patch_current_gui() -> None:
             "PENSANDO", "PROCESSANDO", "EXECUTANDO", "FALANDO", "ERRO",
         }
         try:
-            # Preserve movement while reducing main-thread pressure from ~30 FPS
-            # to ~14 FPS during interaction and ~7 FPS while idle.
             self.voice_orb_phase += 0.085 if active else 0.035
             if not callable(original_render_orb_frame):
                 return
@@ -156,8 +175,7 @@ def _patch_current_gui() -> None:
                     pass
                 self._safe_orb_canvas_item = canvas.create_image(0, 0, image=photo, anchor="nw")
 
-            delay = 70 if active else 140
-            self.voice_orb_animation_job = root.after(delay, self._animate_voice_orb)
+            self.voice_orb_animation_job = root.after(70 if active else 140, self._animate_voice_orb)
         except Exception as exc:
             self.voice_orb_animation_job = None
             try:
@@ -167,6 +185,7 @@ def _patch_current_gui() -> None:
 
     cls._conversation_visual_lock_active = conversation_visual_lock_active
     cls._sync_conversation_overlay_lock = sync_conversation_overlay_lock
+    cls._setup_qt_voice_overlay = setup_qt_voice_overlay
     cls._settle_voice_idle = settle_voice_idle
     cls._animate_voice_orb = safe_tk_orb_animation
     _legacy._PATCHED.add("gui")
