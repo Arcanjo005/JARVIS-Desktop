@@ -1,16 +1,13 @@
-# JARVIS Desktop 1.2.8 — Runtime unificado, esfera moderna e base para updates rápidos
+# JARVIS Desktop 1.2.9 — Esfera 3D giratória restaurada
 
-- Remove o conflito que fazia o bootstrap legado 1.2.3 substituir a interface moderna pela tela antiga mesmo nas versões 1.2.6/1.2.7.
-- Mantém os patches funcionais úteis do bootstrap antigo, mas bloqueia explicitamente o layout legado e o detector antigo de microfone.
-- A interface efetiva passa a usar `gui_conversation_shell`: lateral dedicada a conversas, histórico, busca, nova conversa e botão `COPIAR CONVERSA`.
-- Nova conversa passa a iniciar o viewport no topo, sem herdar uma posição de rolagem antiga.
-- Corrige a esfera do modo conversa: o modo de conversa não força mais `OUVINDO` permanentemente. Em repouso ela fica compacta em `OCIOSO`; ativa quando o microfone realmente captura ou quando o JARVIS entende, pensa, executa ou fala.
-- Preserva a esfera Qt/PySide6 moderna com estilos Cristal, Núcleo, Anéis, Pulso e Minimal e mantém fallback apenas quando o processo Qt realmente não puder iniciar.
-- O diagnóstico agora detalha backend efetivo da esfera, processo Qt, estilo, estado enviado, estado visual, modo compacto e últimos logs do overlay quando houver fallback.
-- O diagnóstico de áudio passa a mostrar a entrada PortAudio efetiva, Host API, taxa nativa/reamostragem, VAD, STT, overflows e último erro do VoiceEngine.
-- Mantém o detector moderno de microfone do `voice_engine.py`, com teste real de `RawInputStream`, preferência por APIs estáveis e fallback 44,1/48 kHz com reamostragem para 16 kHz.
-- Corrige o bootstrap de Hot Runtime para descobrir a versão do instalador sem importar `jarvis_version` antes da ativação. Isso impede o runtime embutido antigo de contaminar a sessão antes de uma atualização rápida entrar em `sys.path`.
-- Fixa a base do atualizador em 1.2.8 para permitir que as próximas correções normais de interface/esfera/áudio sejam distribuídas por Hot Update, evitando PyInstaller/Inno Setup sempre que os arquivos protegidos não mudarem.
+- Remove o visual antigo `core`/reator com círculos concêntricos que voltou a aparecer indevidamente.
+- Restaura como padrão a esfera 3D giratória do renderer principal do JARVIS, com volume, reflexos, partículas orbitais e animação contínua.
+- Configurações antigas salvas como `core` são migradas automaticamente para `crystal` para que a esfera velha não reapareça após atualizar.
+- Retira `core` das opções visuais expostas ao usuário.
+- Impede o overlay Qt antigo de assumir prioridade sobre a esfera 3D aprovada.
+- Mantém os estados visuais sincronizados com o VoiceEngine: `OCIOSO`, `OUVINDO`, `ENTENDENDO`, `PENSANDO`, `EXECUTANDO` e `FALANDO`.
+- Em modo ocioso a esfera permanece em repouso; não fica presa em `OUVINDO` só porque o modo conversa está ativo.
+- Mantém as correções da 1.2.8 para interface de conversas, áudio moderno, Hot Runtime e diagnóstico.
 
-Versão: 1.2.8
+Versão: 1.2.9
 Canal: stable
