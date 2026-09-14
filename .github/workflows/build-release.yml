@@ -47,46 +47,42 @@ jobs:
           }
           "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Ativar interface de conversas
+      - name: Ativar interface exata da referência
         shell: powershell
         run: |
           $mainPath = "main.py"
           $main = Get-Content -LiteralPath $mainPath -Raw
           $old = "from gui import JarvisGUI"
-          $new = "from gui_conversation_shell import JarvisGUI"
-          if (-not $main.Contains($old) -and -not $main.Contains($new)) {
+          $legacy = "from gui_conversation_shell import JarvisGUI"
+          $exact = "from gui_reference_exact import JarvisGUI"
+
+          if ($main.Contains($old)) {
+            $main = $main.Replace($old, $exact)
+          } elseif ($main.Contains($legacy)) {
+            $main = $main.Replace($legacy, $exact)
+          } elseif (-not $main.Contains($exact)) {
             throw "Entry point do JARVIS não contém um import de GUI reconhecido."
           }
-          if ($main.Contains($old)) {
-            $main = $main.Replace($old, $new)
-          }
 
-          # main.py importa a GUI dentro de um bloco try com 8 espaços. Preserve
-          # explicitamente essa indentação; Trim() no here-string antigo removia
-          # os espaços da primeira linha e gerava SyntaxError antes do build.
-          $visualHook = "        from jarvis_visual_runtime import install as _install_visual_runtime`r`n        _install_visual_runtime(JarvisGUI)"
-          if (-not $main.Contains("_install_visual_runtime(JarvisGUI)")) {
-            $main = $main.Replace($new, $new + "`r`n" + $visualHook)
-          }
+          # Remove qualquer hook do renderer PBR antigo. A referência aprovada
+          # agora é a fonte visual, inclusive para a esfera central.
+          $main = $main -replace '(?m)^\s*from jarvis_visual_runtime import install as _install_visual_runtime\s*\r?\n?', ''
+          $main = $main -replace '(?m)^\s*_install_visual_runtime\(JarvisGUI\)\s*\r?\n?', ''
           Set-Content -LiteralPath $mainPath -Value $main -Encoding utf8
 
           $verified = Get-Content -LiteralPath $mainPath -Raw
-          if (-not $verified.Contains($new)) {
-            throw "Falha ao ativar gui_conversation_shell no entry point."
+          if (-not $verified.Contains($exact)) {
+            throw "Falha ao ativar gui_reference_exact no entry point."
           }
-          if (-not $verified.Contains("        from jarvis_visual_runtime import install as _install_visual_runtime")) {
-            throw "Hook PBR foi inserido sem a indentação esperada."
+          if ($verified.Contains("_install_visual_runtime(JarvisGUI)")) {
+            throw "Renderer PBR antigo ainda está ativo."
           }
-          if (-not $verified.Contains("        _install_visual_runtime(JarvisGUI)")) {
-            throw "Falha ao ativar jarvis_visual_runtime no entry point."
+          foreach ($required in @("gui_reference_exact.py", "gui_conversation_shell.py", "jarvis_reference_orb.py")) {
+            if (-not (Test-Path -LiteralPath $required)) {
+              throw "$required ausente."
+            }
           }
-          if (-not (Test-Path -LiteralPath "gui_conversation_shell.py")) {
-            throw "gui_conversation_shell.py ausente."
-          }
-          if (-not (Test-Path -LiteralPath "jarvis_visual_runtime.py")) {
-            throw "jarvis_visual_runtime.py ausente."
-          }
-          Write-Host "[JARVIS] Entry point confirmado: gui_conversation_shell + visual runtime PBR"
+          Write-Host "[JARVIS] Entry point confirmado: gui_reference_exact.JarvisGUI"
 
       - name: Preparar Python para compilacao
         uses: actions/setup-python@v7
@@ -94,12 +90,12 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Validar sintaxe do entry point PBR
+      - name: Validar sintaxe da interface de referência
         shell: powershell
         run: |
-          python -m py_compile main.py gui_conversation_shell.py jarvis_visual_runtime.py
-          if ($LASTEXITCODE -ne 0) { throw "Preflight PBR falhou com codigo $LASTEXITCODE" }
-          Write-Host "[JARVIS] Preflight de sintaxe PBR: PASS"
+          python -m py_compile main.py gui_reference_exact.py gui_conversation_shell.py jarvis_reference_orb.py
+          if ($LASTEXITCODE -ne 0) { throw "Preflight da interface exata falhou com codigo $LASTEXITCODE" }
+          Write-Host "[JARVIS] Preflight da interface de referência: PASS"
 
       - name: Instalar Inno Setup
         shell: powershell
