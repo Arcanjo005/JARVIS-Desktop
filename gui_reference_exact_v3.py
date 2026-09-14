@@ -38,6 +38,7 @@ class JarvisGUI(ReferenceJarvisGUI):
     ORB_FRAME_COUNT = 48
     ORB_SUPERSAMPLE = 2
     ORB_OUTPUT_SIZE = (360, 280)
+    ORB_FRAME_DELAY_MS = 68
 
     @staticmethod
     def _project_point(lat: float, lon: float, phase: float, radius: float, cx: float, cy: float):
@@ -229,6 +230,18 @@ class JarvisGUI(ReferenceJarvisGUI):
             frames.append(ImageTk.PhotoImage(final))
 
         self._ref_orb_frames = frames
+
+    def _animate_reference_orb(self):
+        """Swap pre-rendered 3D frames smoothly without doing heavy work per tick."""
+        try:
+            if not self.root or not self._ref_orb_frames:
+                return
+            idx = int(self._ref_orb_index) % len(self._ref_orb_frames)
+            self._ref_canvas.itemconfigure(self._ref_orb_item, image=self._ref_orb_frames[idx])
+            self._ref_orb_index = idx + 1
+            self.root.after(self.ORB_FRAME_DELAY_MS, self._animate_reference_orb)
+        except Exception:
+            pass
 
 
 __all__ = ["JarvisGUI"]
