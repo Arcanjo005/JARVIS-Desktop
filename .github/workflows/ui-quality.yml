@@ -36,7 +36,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force validation | Out-Null
-          git archive --format=zip HEAD -o validation/validated-source.zip -- gui_reference_exact_v3.py gui_conversation_shell.py jarvis_ui_render.py jarvis_display.py jarvis_quick_controls.py jarvis_ui_selftest.py tools/ui_preflight.py tools/renderer_smoke.py .github/workflows
+          git archive --format=zip HEAD -o validation/validated-source.zip -- gui_reference_exact_v3.py gui_conversation_shell.py jarvis_ui_render.py jarvis_display.py jarvis_quick_controls.py jarvis_ui_selftest.py tools/ui_preflight.py tools/renderer_smoke.py tools/display_smoke.py .github/workflows
           if ($LASTEXITCODE -ne 0) { throw "Source archive failed" }
       - name: Preflight and legacy regression gates
         shell: pwsh
@@ -56,6 +56,11 @@ jobs:
         run: |
           python jarvis_ui_selftest.py
           if ($LASTEXITCODE -ne 0) { throw "UI behavior tests failed" }
+      - name: Verify native monitor fitting
+        shell: pwsh
+        run: |
+          python tools/display_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw "Native display fitting failed" }
       - name: Freeze and exercise production renderer
         shell: pwsh
         run: |
