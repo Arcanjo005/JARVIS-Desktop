@@ -57,8 +57,8 @@ def fit_window(root, initial=False):
     """Shrink an oversized normal window on its current monitor, never enlarge it."""
     area = monitor_work_area(root)
     scale = float(root._get_window_scaling())
-    root.minsize(max(240, min(620, int((area.width-32)/scale))),
-                 max(220, min(440, int((area.height-72)/scale))))
+    root.minsize(max(240, min(620, int((area.width-64)/scale))),
+                 max(220, min(440, int((area.height-100)/scale))))
     if initial:
         root.geometry(f"{min(1420, int((area.width-48)/scale))}x{min(900, int((area.height-100)/scale))}")
         return area
@@ -80,9 +80,25 @@ def fit_window(root, initial=False):
         if user32.GetWindowRect(hwnd, ctypes.byref(rect)):
             w, h = rect.right-rect.left, rect.bottom-rect.top
             if w > area.width-24 or h > area.height-24:
-                x, y, w, h = clamp_rect(rect.left, rect.top, w, h, area)
-                if not user32.SetWindowPos(hwnd, None, x, y, w, h, 0x0014):
-                    raise ctypes.WinError(ctypes.get_last_error())
+                _, _, target_w, target_h = clamp_rect(rect.left, rect.top, w, h, area)
+                chrome_w = max(0, w-root.winfo_width())
+                chrome_h = max(0, h-root.winfo_height())
+                # Tk owns client geometry. Resizing only the native HWND can
+                # leave its requested size unchanged, which Tk later restores.
+                logical_w = max(1, int((target_w-chrome_w)/scale))
+                logical_h = max(1, int((target_h-chrome_h)/scale))
+                root.geometry(f"{logical_w}x{logical_h}")
+                root.update_idletasks()
+            # A correctly sized window can still open partly off-screen at
+            # the OS cascade position. Fit position as well as dimensions.
+            if user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                x, y, _, _ = clamp_rect(rect.left, rect.top, rect.right-rect.left,
+                                        rect.bottom-rect.top, area)
+                if (x, y) != (rect.left, rect.top):
+                    # Position only: native coordinates support negative-origin
+                    # monitors without fighting Tk/CTk's logical dimensions.
+                    if not user32.SetWindowPos(hwnd, None, x, y, 0, 0, 0x0015):
+                        raise ctypes.WinError(ctypes.get_last_error())
     elif root.winfo_width() > area.width or root.winfo_height() > area.height:
         root.geometry(f"{int((area.width-24)/scale)}x{int((area.height-60)/scale)}")
     return area

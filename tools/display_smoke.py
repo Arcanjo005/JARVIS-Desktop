@@ -14,7 +14,8 @@ def main():
     root_dir = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root_dir))
     from jarvis_ui_selftest import TestApplication, CaptureLogger, SimpleNamespace, pump
-    from jarvis_display import monitor_work_area, fit_window
+    from jarvis_display import monitor_work_area
+    import customtkinter as ctk
     from PIL import ImageGrab
     evidence = root_dir / "validation"
     evidence.mkdir(exist_ok=True)
@@ -49,22 +50,29 @@ def main():
                     data["native_outer"] = [rect.left, rect.top, rect.right, rect.bottom]
             snapshots.append(data)
             return data
+        def check_bounds(data):
+            area = data["area"]
+            for name, (x,y,w,h) in data["controls"].items():
+                if not (area["x"] <= x and area["y"] <= y and x+w <= area["x"]+area["width"] and y+h <= area["y"]+area["height"]):
+                    failures.append(data["label"] + ": " + name + " outside monitor work area")
         try:
             pump(app, 1.3)
-            record("initial")
-            for size in ("1420x900", "800x600", "620x440"):
+            check_bounds(record("initial"))
+            for size, scale in (("1420x900",1), ("800x600",1), ("620x440",1), ("1000x700",1.5), ("1000x700",2), ("620x440",1)):
+                if ctk.ScalingTracker.widget_scaling != scale:
+                    ctk.set_widget_scaling(scale)
+                    ctk.set_window_scaling(scale)
+                label = f"{size}-scale-{scale}"
                 window.geometry(size)
                 pump(app, .45)
-                record(size + " automatic")
-                fit_window(window)
-                pump(app, 1.25)
-                data = record(size + " settled")
-                area = data["area"]
-                for name, (x,y,w,h) in data["controls"].items():
-                    if not (area["x"] <= x and area["y"] <= y and x+w <= area["x"]+area["width"] and y+h <= area["y"]+area["height"]):
-                        failures.append(size + ": " + name + " outside monitor work area")
+                record(label + " automatic")
+                # The production Configure binding must do the fitting; calling
+                # fit_window here would mask a broken event handler.
+                pump(app, 1.4)
+                data = record(label + " settled")
+                check_bounds(data)
                 x,y,w,h = data["root"]
-                ImageGrab.grab(bbox=(x,y,x+w,y+h)).save(evidence / ("display-"+size+".png"))
+                ImageGrab.grab(bbox=(x,y,x+w,y+h)).save(evidence / ("display-"+label+".png"))
         finally:
             window.destroy()
             app.memory_store.close()
