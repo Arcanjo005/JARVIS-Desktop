@@ -7,10 +7,21 @@ Windows audio policy:
 - let PortAudio choose the hardware buffer (blocksize=0), then resample to
   JARVIS' 16 kHz inside _StableDirectStream;
 - missing/unplugged microphone is recoverable, not a fatal visual error.
+
+Voice interaction policy:
+- wake phrases are conservative but tolerant of common Vosk renderings of
+  "Jarvis" (javis/jarves/jervis/ja vis);
+- a stable exact wake partial is enough; we do not require an unnecessarily
+  strong final confidence outside call-guard contexts;
+- AntonioNeural remains preferred, but speech must fail open: other Brazilian
+  male neural voices and finally a local Windows voice are preferable to
+  silently dropping a response;
+- if the TTS worker ever dies, the next speak() request restarts it.
 """
 from __future__ import annotations
 
 import sys
+import threading
 import time
 
 
@@ -24,10 +35,92 @@ def install(voice_cls) -> bool:
 
     original_state = getattr(voice_cls, "_state", None)
     original_supervisor = getattr(voice_cls, "_voice_supervisor_loop", None)
+    original_speak = getattr(voice_cls, "speak", None)
+    original_normalize = getattr(voice_cls, "_normalize", None)
     module = sys.modules.get(getattr(voice_cls, "__module__", ""))
     stable_stream_cls = getattr(module, "_StableDirectStream", None) if module else None
     if not callable(original_state) or not callable(original_supervisor) or stable_stream_cls is None:
         return False
+
+    # ------------------------------------------------------------------
+    # Wake word: keep exact-phrase semantics but cover how the PT Vosk model
+    # commonly renders the English proper name JARVIS.
+    # ------------------------------------------------------------------
+    existing_phrases = list(getattr(voice_cls, "WAKE_PHRASES", ()) or ())
+    wake_variants = (
+        "jarvis", "javis", "jarves", "jervis", "jarvi", "jarvisse", "jarbas", "ja vis",
+        "oi jarvis", "oi javis", "oi jarves", "oi jervis", "oi ja vis",
+        "ei jarvis", "ei javis", "ei jarves", "ei jervis", "ei ja vis",
+        "e ai jarvis", "e ai javis", "e ai jarves", "e ai jervis", "e ai ja vis",
+        "eae jarvis", "eae javis", "eae jarves",
+        "ola jarvis", "ola javis", "ola jarves", "ola jervis",
+        "alo jarvis", "alo javis", "o jarvis", "o javis",
+    )
+    voice_cls.WAKE_PHRASES = tuple(dict.fromkeys([*existing_phrases, *wake_variants]))
+    voice_cls.DUAL_WAKE = False
+    voice_cls.WAKE_FAST_PARTIAL = True
+    try:
+        voice_cls.WAKE_PARTIAL_STABLE = min(float(getattr(voice_cls, "WAKE_PARTIAL_STABLE", 0.10)), 0.055)
+    except Exception:
+        voice_cls.WAKE_PARTIAL_STABLE = 0.055
+    try:
+        voice_cls.WAKE_MIN_FINAL_CONFIDENCE = min(float(getattr(voice_cls, "WAKE_MIN_FINAL_CONFIDENCE", 0.34)), 0.22)
+    except Exception:
+        voice_cls.WAKE_MIN_FINAL_CONFIDENCE = 0.22
+    voice_cls.WAKE_MIN_LEAD_SILENCE = 0.0
+    try:
+        voice_cls.CALL_WAKE_MIN_LEAD_SILENCE = min(float(getattr(voice_cls, "CALL_WAKE_MIN_LEAD_SILENCE", 0.08)), 0.05)
+    except Exception:
+        voice_cls.CALL_WAKE_MIN_LEAD_SILENCE = 0.05
+
+    if callable(original_normalize):
+        def normalize_voice_text(text: str) -> str:
+            value = original_normalize(text)
+            replacements = {
+                "javis": "jarvis",
+                "jarves": "jarvis",
+                "jervis": "jarvis",
+                "jarvi": "jarvis",
+                "jarvisse": "jarvis",
+                "jarbas": "jarvis",
+                "ja vis": "jarvis",
+                "jar viz": "jarvis",
+                "eae": "e ai",
+            }
+            for source, target in replacements.items():
+                value = value.replace(source, target)
+            return " ".join(value.split()).strip()
+        voice_cls._normalize = staticmethod(normalize_voice_text)
+
+    # ------------------------------------------------------------------
+    # TTS: preferred identity first, reliability second, silence never.
+    # ------------------------------------------------------------------
+    voice_cls.TTS_VOICE_LOCK = False
+    voice_cls.TTS_ALLOW_LOCAL_FALLBACK = True
+
+    if callable(original_speak):
+        def reliable_speak(self, *args, **kwargs):
+            # A prior playback/backend exception must not permanently silence
+            # the process. Restart only the TTS worker, never the microphone.
+            try:
+                worker = getattr(self, "_tts_thread", None)
+                stop_event = getattr(self, "_stop_event", None)
+                stopped = bool(stop_event and stop_event.is_set())
+                if not stopped and (worker is None or not worker.is_alive()):
+                    self._tts_thread = threading.Thread(
+                        target=self._tts_worker,
+                        name="JARVIS-TTS-RECOVERY",
+                        daemon=True,
+                    )
+                    self._tts_thread.start()
+                    try:
+                        self._log("warning", "Worker de TTS reiniciado automaticamente.")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            return original_speak(self, *args, **kwargs)
+        voice_cls.speak = reliable_speak
 
     def _host_name(hostapis, device):
         try:
@@ -108,8 +201,6 @@ def install(voice_cls) -> bool:
             candidates.append((score, index, device, host))
 
         candidates.sort(key=lambda row: (-row[0], row[1]))
-        # Keep WDM-KS visible as an emergency route, but never let it outrank a
-        # normal Windows host API just because the endpoint name looks better.
         non_wdm = [row for row in candidates if not _is_wdm(row[3])]
         wdm = [row for row in candidates if _is_wdm(row[3])]
         candidates = non_wdm + wdm
@@ -129,8 +220,6 @@ def install(voice_cls) -> bool:
             except Exception:
                 native = 0
             rates = []
-            # Native/shared-mode rates first. 16 kHz is only a convenience rate
-            # and must not reject a perfectly valid 44.1/48 kHz Windows mic.
             for rate in (native, 48000, 44100, 32000, self.SAMPLE_RATE):
                 if rate > 0 and rate not in rates:
                     rates.append(rate)
@@ -144,9 +233,6 @@ def install(voice_cls) -> bool:
                         dtype="int16",
                         samplerate=rate,
                     )
-                    # blocksize=0 lets the host choose a hardware-safe buffer.
-                    # Read one short block so a device that merely opens but does
-                    # not deliver audio is not declared healthy.
                     stream = self._sd.RawInputStream(
                         samplerate=rate,
                         blocksize=0,
@@ -199,8 +285,6 @@ def install(voice_cls) -> bool:
                     pass
                 return
 
-        # Preserve several probes in the error so diagnostics show whether the
-        # failure belongs to one endpoint or to every Windows host route.
         detail = " | ".join(errors[:8]) if errors else "nenhum stream de entrada pôde ser aberto"
         self._input_probe_errors = list(errors[:16])
         self._auto_recovery_suspended = False
@@ -274,8 +358,6 @@ def install(voice_cls) -> bool:
                     self._ready_event.clear()
                     self._mic_available = False
                     self._auto_recovery_suspended = False
-                    # A stream failure is recoverable. Do not poison the visual
-                    # state with a permanent red ERRO.
                     self._state("RECONECTANDO", "Reabrindo entrada de áudio")
                     return
                 self._state("AGUARDANDO", "Reabrindo entrada de áudio")
