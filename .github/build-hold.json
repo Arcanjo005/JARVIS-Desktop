@@ -1,0 +1,5 @@
+{
+  "run_id": 34871015771,
+  "head_sha": "7cf1e206a28d6302fc606b425dd9a98218d47456",
+  "reason": "Hold publication: regression reproduced when typed input interrupts voice while chat TTS is disabled."
+}

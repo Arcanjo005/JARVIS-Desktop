@@ -1,0 +1,41 @@
+name: Hold a specific JARVIS build
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/build-hold.json"]
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  hold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate and cancel only the requested build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          run_id=$(jq -er '.run_id' .github/build-hold.json)
+          expected=$(jq -er '.head_sha' .github/build-hold.json)
+          [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "Invalid run ID"; exit 1; }
+          [[ "$expected" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid expected source"; exit 1; }
+          details=$(gh api "repos/$REPO/actions/runs/$run_id")
+          actual=$(jq -r '.head_sha' <<< "$details")
+          path=$(jq -r '.path' <<< "$details")
+          [[ "$actual" == "$expected" && "$path" == ".github/workflows/build-release.yml" ]] || {
+            echo "Refusing to cancel a different commit or workflow"; exit 1;
+          }
+          jq -r '.reason' .github/build-hold.json
+          status=$(jq -r '.status' <<< "$details")
+          if [[ "$status" == "completed" ]]; then
+            echo "Build already completed; no cancellation performed."
+            exit 1
+          fi
+          gh run cancel "$run_id" --repo "$REPO"
