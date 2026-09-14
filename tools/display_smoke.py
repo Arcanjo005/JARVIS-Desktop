@@ -13,7 +13,7 @@ import time
 def main():
     root_dir = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root_dir))
-    from jarvis_ui_selftest import TestApplication, CaptureLogger, SimpleNamespace, pump
+    from jarvis_ui_selftest import TestApplication, CaptureLogger, SimpleNamespace, pump, walk, MessageText
     from jarvis_display import monitor_work_area
     import customtkinter as ctk
     from PIL import ImageGrab
@@ -48,6 +48,15 @@ def main():
                 rect = wintypes.RECT()
                 if u.GetWindowRect(h, ctypes.byref(rect)):
                     data["native_outer"] = [rect.left, rect.top, rect.right, rect.bottom]
+            data["message_layout"] = []
+            for widget in walk(app.chat_scroll):
+                if isinstance(widget, MessageText):
+                    native = widget._textbox
+                    last = native.dlineinfo("end-1c")
+                    data["message_layout"].append({"inner_height": native.winfo_height(),
+                                                  "outer_height": widget.winfo_height(),
+                                                  "yview": list(native.yview()),
+                                                  "last_line": list(last) if last else None})
             snapshots.append(data)
             return data
         def check_bounds(data):
@@ -55,6 +64,11 @@ def main():
             for name, (x,y,w,h) in data["controls"].items():
                 if not (area["x"] <= x and area["y"] <= y and x+w <= area["x"]+area["width"] and y+h <= area["y"]+area["height"]):
                     failures.append(data["label"] + ": " + name + " outside monitor work area")
+            for message in data["message_layout"]:
+                last = message["last_line"]
+                if (last is None or message["yview"][1] < 0.999
+                        or last[1]+last[3] > message["inner_height"]):
+                    failures.append(data["label"] + ": transcript text clipped inside its widget")
         try:
             pump(app, 1.3)
             check_bounds(record("initial"))

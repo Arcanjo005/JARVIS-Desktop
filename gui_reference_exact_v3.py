@@ -60,9 +60,21 @@ class MessageText(ctk.CTkTextbox):
         lines = (int(count[0]) if count else 0)+1
         font = tkfont.Font(root=self, font=self._textbox.cget("font"))
         scale = self._get_widget_scaling()
-        height = max(36, math.ceil((lines*font.metrics("linespace")+14)/scale))
+        native = self._textbox
+        outer_padding = max(0, self.winfo_height()-native.winfo_height())
+        inner_padding = 2*sum(native.winfo_pixels(native.cget(option))
+                              for option in ("pady", "borderwidth", "highlightthickness"))
+        height = max(36, math.ceil((lines*font.metrics("linespace")
+                                    + outer_padding + inner_padding + 2)/scale))
         if abs(float(self.cget("height"))-height) > 1:
             self.configure(height=height)
+
+    def _set_scaling(self, *args, **kwargs):
+        super()._set_scaling(*args, **kwargs)
+        # DPI changes can change font metrics even at the same physical width.
+        # Re-measure after CTk has applied the scaled font and corner padding.
+        if hasattr(self, "_measure_job"):
+            self._request_measure()
 
     def set_message(self, text):
         self.configure(state="normal")
