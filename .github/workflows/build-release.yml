@@ -60,12 +60,13 @@ jobs:
           if ($main.Contains($old)) {
             $main = $main.Replace($old, $new)
           }
-          $visualHook = @"
-          from jarvis_visual_runtime import install as _install_visual_runtime
-          _install_visual_runtime(JarvisGUI)
-          "@
+
+          # main.py importa a GUI dentro de um bloco try com 8 espaços. Preserve
+          # explicitamente essa indentação; Trim() no here-string antigo removia
+          # os espaços da primeira linha e gerava SyntaxError antes do build.
+          $visualHook = "        from jarvis_visual_runtime import install as _install_visual_runtime`r`n        _install_visual_runtime(JarvisGUI)"
           if (-not $main.Contains("_install_visual_runtime(JarvisGUI)")) {
-            $main = $main.Replace($new, $new + "`r`n" + $visualHook.Trim())
+            $main = $main.Replace($new, $new + "`r`n" + $visualHook)
           }
           Set-Content -LiteralPath $mainPath -Value $main -Encoding utf8
 
@@ -73,7 +74,10 @@ jobs:
           if (-not $verified.Contains($new)) {
             throw "Falha ao ativar gui_conversation_shell no entry point."
           }
-          if (-not $verified.Contains("_install_visual_runtime(JarvisGUI)")) {
+          if (-not $verified.Contains("        from jarvis_visual_runtime import install as _install_visual_runtime")) {
+            throw "Hook PBR foi inserido sem a indentação esperada."
+          }
+          if (-not $verified.Contains("        _install_visual_runtime(JarvisGUI)")) {
             throw "Falha ao ativar jarvis_visual_runtime no entry point."
           }
           if (-not (Test-Path -LiteralPath "gui_conversation_shell.py")) {
@@ -89,6 +93,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
+
+      - name: Validar sintaxe do entry point PBR
+        shell: powershell
+        run: |
+          python -m py_compile main.py gui_conversation_shell.py jarvis_visual_runtime.py
+          if ($LASTEXITCODE -ne 0) { throw "Preflight PBR falhou com codigo $LASTEXITCODE" }
+          Write-Host "[JARVIS] Preflight de sintaxe PBR: PASS"
 
       - name: Instalar Inno Setup
         shell: powershell
