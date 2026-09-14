@@ -83,6 +83,36 @@ def pump(app, seconds=0.12):
     app.root.update_idletasks()
 
 
+
+def settle_layout(app, timeout=5.0):
+    """Await actual geometry settlement, not an arbitrary frame-count sleep.
+
+    Keep the original bounds assertions at the call site. A permanently clipped
+    layout still fails there; a resize feedback loop fails this bounded wait.
+    """
+    deadline = time.monotonic()+timeout
+    previous = None
+    stable_since = None
+    snapshot = None
+    while time.monotonic() < deadline:
+        pump(app, .025)
+        widgets = (app.root, app.update_button, app.quick_menu_button,
+                   app.text_input, app.send_button)
+        snapshot = tuple((w.winfo_rootx(), w.winfo_rooty(), w.winfo_width(), w.winfo_height())
+                         for w in widgets)
+        pending = set(app._ui_jobs).intersection({"layout", "fit"})
+        now = time.monotonic()
+        if snapshot == previous and not pending:
+            if stable_since is None:
+                stable_since = now
+            elif now-stable_since >= .15:
+                return
+        else:
+            stable_since = None
+        previous = snapshot
+    raise AssertionError(f"Layout did not settle: jobs={list(app._ui_jobs)}, geometry={snapshot}")
+
+
 def walk(widget):
     yield widget
     for child in widget.winfo_children():
@@ -245,7 +275,7 @@ class InterfaceTests(unittest.TestCase):
     def test_responsive_sizes_and_live_controls(self):
         a=self.app
         for width,height in ((1420,900),(1024,680),(800,600),(620,440),(1280,720)):
-            a.root.geometry(f"{width}x{height}");pump(a,.35)
+            a.root.geometry(f"{width}x{height}");settle_layout(a)
             for widget in (a.quick_menu_button,a.text_input,a.send_button,a.voice_button,a.update_button,a.history_button):
                 self.assert_inside(widget)
             self.assertGreater(a.text_input.winfo_width(),180)
@@ -259,12 +289,12 @@ class InterfaceTests(unittest.TestCase):
         a=self.app
         for scale in (1.25,1.5,2):
             ctk.set_widget_scaling(scale);ctk.set_window_scaling(scale)
-            a.root.geometry("1000x700");pump(a,.35)
+            a.root.geometry("1000x700");settle_layout(a)
             for widget in (a.update_button,a.quick_menu_button,a.text_input,a.send_button): self.assert_inside(widget)
         # Only use the available desktop, not an invented physical monitor result.
         ctk.set_widget_scaling(2);ctk.set_window_scaling(1)
         a.root.geometry(f"{min(3800,a.root.winfo_screenwidth()-50)}x{min(2050,a.root.winfo_screenheight()-120)}")
-        pump(a,.5)
+        settle_layout(a)
         self.assert_inside(a.update_button)
 
     def test_history_drawer_and_breakpoints(self):
@@ -385,6 +415,30 @@ class InterfaceTests(unittest.TestCase):
         a=self.app;a.voice_engine=VoiceFixture();a._chat_tts_enabled=False;self.send()
         a.add_message("JARVIS","Nao falar.",is_jarvis=True,speak=True)
         self.assertEqual(a.voice_engine.spoken,[])
+
+    def test_typed_interrupt_respects_disabled_speech(self):
+        a=self.app;a.voice_engine=VoiceFixture()
+        a._voice_command_active=True;a.is_processing=True;a._chat_tts_enabled=False
+        # An empty composer must not interrupt a genuine voice turn.
+        a.send_button.invoke()
+        self.assertTrue(a._voice_command_active)
+        self.send("Typed input interrupts the voice turn")
+        self.assertFalse(a._voice_command_active)
+        a.add_message("JARVIS","Typed response must remain silent.",is_jarvis=True,speak=True)
+        self.assertEqual(a.voice_engine.spoken,[])
+
+    def test_typed_interrupt_stream_speaks_once(self):
+        a=self.app;a.voice_engine=VoiceFixture()
+        a._voice_command_active=True;a.is_processing=True
+        token=self.send("Typed input owns the new turn")
+        self.assertFalse(a._voice_command_active)
+        a._active_stream_token=token
+        a.streaming_label=a._create_chat_bubble("JARVIS","",is_jarvis=True)
+        a._append_streaming_chunk("Typed response.")
+        self.assertEqual(a.voice_engine.spoken,[])
+        a._finish_streaming_response("Typed response.",token)
+        a._finish_streaming_response("Stale response.",token)
+        self.assertEqual(a.voice_engine.spoken,[a._voice_spoken_summary("Typed response.")])
 
     def test_delayed_speech_cannot_leak_into_new_turn(self):
         a=self.app;self.send("primeiro")

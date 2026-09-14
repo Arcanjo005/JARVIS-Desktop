@@ -684,6 +684,11 @@ class JarvisGUI(BaseJarvisGUI):
 
     def _begin_work_generation(self):
         token = super()._begin_work_generation()
+        if getattr(self, "_text_speech_requested", False):
+            # A valid typed turn takes ownership from the interrupted voice
+            # turn. Otherwise the inherited voice route bypasses the chat TTS
+            # switch and may also enqueue streaming speech a second time.
+            self._voice_command_active = False
         self._text_turn_token = (token, self.active_conversation_id) if getattr(self, "_text_speech_requested", False) else None
         self._text_speech_token = self._text_turn_token if self._chat_tts_enabled else None
         self._speech_delivery = None
