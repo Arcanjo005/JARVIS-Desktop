@@ -22,21 +22,21 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Preserve exact source for reproducible validation
-        shell: pwsh
-        run: |
-          git archive --format=zip HEAD -o validation-source.zip
-          if ($LASTEXITCODE -ne 0) { throw "Source archive failed" }
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ui-validation-source
-          path: validation-source.zip
-          retention-days: 3
-          if-no-files-found: error
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
+      - name: Preserve portable UI dependencies for reproducible testing
+        shell: pwsh
+        run: |
+          python -m pip download --only-binary=:all: --no-deps --dest validation/wheels customtkinter==5.2.2 darkdetect==0.8.0
+          if ($LASTEXITCODE -ne 0) { throw "Portable dependency download failed" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-wheels
+          path: validation/wheels/
+          retention-days: 3
+          if-no-files-found: error
       - name: Install production dependencies
         shell: pwsh
         run: |
