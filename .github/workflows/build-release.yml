@@ -136,3 +136,16 @@ jobs:
 
           gh release edit $tag --repo $repo --draft=false --latest
           if ($LASTEXITCODE -ne 0) { throw "Falha ao publicar a release $tag" }
+
+      - name: Salvar evidencias de validacao
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JARVIS-validation-${{ env.RELEASE_VERSION }}-${{ github.run_number }}
+          path: |
+            validation/*.json
+            validation/*.png
+            build/pyinstaller/runtime-selftest*.json
+            build/pyinstaller/hot-runtime-smoke/runtime-selftest-hot.json
+          if-no-files-found: ignore
+          retention-days: 14

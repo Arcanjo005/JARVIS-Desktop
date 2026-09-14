@@ -14,12 +14,26 @@ def main():
     root_dir = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root_dir))
     from jarvis_ui_selftest import TestApplication, CaptureLogger, SimpleNamespace, pump, walk, MessageText
-    from jarvis_display import monitor_work_area
+    from jarvis_display import monitor_work_area, fit_window, WorkArea
     import customtkinter as ctk
     from PIL import ImageGrab
     evidence = root_dir / "validation"
     evidence.mkdir(exist_ok=True)
     snapshots, failures = [], []
+    # Deterministic geometry policy check complements the real-window test.
+    from unittest.mock import patch
+    limits = {}
+    fake = SimpleNamespace(
+        _get_window_scaling=lambda: 1.0,
+        minsize=lambda w, h: limits.update(minimum=(w, h)),
+        maxsize=lambda w, h: limits.update(maximum=(w, h)),
+        geometry=lambda value: limits.update(geometry=value),
+    )
+    with patch("jarvis_display.monitor_work_area", return_value=WorkArea(0, 0, 1024, 728)), \
+            patch("jarvis_display.ctk.ScalingTracker.get_widget_scaling", return_value=2.0):
+        fit_window(fake, initial=True)
+    assert limits["minimum"] == (960, 628), limits
+    assert limits["maximum"] == (1024, 728), limits
     with tempfile.TemporaryDirectory(prefix="jarvis-display-") as td:
         os.environ["JARVIS_APP_DIR"] = td
         os.environ["LOCALAPPDATA"] = td
@@ -35,7 +49,11 @@ def main():
                 controls[name] = [item.winfo_rootx(), item.winfo_rooty(), item.winfo_width(), item.winfo_height()]
             data = {"label": label, "area": vars(area), "state": window.state(),
                     "geometry": window.geometry(), "root": [window.winfo_rootx(), window.winfo_rooty(), window.winfo_width(), window.winfo_height()],
-                    "controls": controls, "jobs": list(app._ui_jobs)}
+                    "controls": controls, "jobs": list(app._ui_jobs),
+                    "widget_scale": app._center._get_widget_scaling(),
+                    "window_scale": window._get_window_scaling(),
+                    "native_min": list(window.tk.call("wm", "minsize", window._w)),
+                    "native_max": list(window.tk.call("wm", "maxsize", window._w))}
             if os.name == "nt":
                 import ctypes
                 from ctypes import wintypes
@@ -72,14 +90,21 @@ def main():
         try:
             pump(app, 1.3)
             check_bounds(record("initial"))
-            for size, scale in (("1420x900",1), ("800x600",1), ("620x440",1), ("1000x700",1.5), ("1000x700",2), ("620x440",1)):
+            for size, scale, window_scale in (("1420x900",1,1), ("800x600",1,1), ("620x440",1,1),
+                                               ("1000x700",1.5,1.5), ("1000x700",2,2),
+                                               ("974x648",2,1), ("620x440",1,1)):
                 if ctk.ScalingTracker.widget_scaling != scale:
                     ctk.set_widget_scaling(scale)
-                    ctk.set_window_scaling(scale)
-                label = f"{size}-scale-{scale}"
+                if ctk.ScalingTracker.window_scaling != window_scale:
+                    ctk.set_window_scaling(window_scale)
+                label = f"{size}-scale-{scale}-window-{window_scale}"
                 window.geometry(size)
                 pump(app, .45)
-                record(label + " automatic")
+                early = record(label + " automatic")
+                if scale != window_scale:
+                    # Regresses the rapid independent scale transition that
+                    # exposed a temporary native min=max lock in full build 48.
+                    check_bounds(early)
                 # The production Configure binding must do the fitting; calling
                 # fit_window here would mask a broken event handler.
                 pump(app, 1.4)

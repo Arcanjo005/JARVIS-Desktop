@@ -7,6 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 
+import customtkinter as ctk
+
 
 @dataclass(frozen=True)
 class WorkArea:
@@ -57,8 +59,18 @@ def fit_window(root, initial=False):
     """Shrink an oversized normal window on its current monitor, never enlarge it."""
     area = monitor_work_area(root)
     scale = float(root._get_window_scaling())
-    root.minsize(max(240, min(620, int((area.width-64)/scale))),
-                 max(220, min(440, int((area.height-100)/scale))))
+    widget_scale = float(ctk.ScalingTracker.get_widget_scaling(root))
+    # Widget scale and window scale can differ during a DPI transition or a
+    # user zoom change. Minimum usable size follows the controls, not only the
+    # window scale. Keep this policy in CTk's public min/max geometry model.
+    min_width = max(1, int(min(620*widget_scale, area.width-64)/scale))
+    min_height = max(1, int(min(440*widget_scale, area.height-100)/scale))
+    root.minsize(min_width, min_height)
+    # CTk temporarily locks native min=max while applying scaling. Restore the
+    # actual work-area constraint before requesting geometry; otherwise a rapid
+    # second scale change can silently discard the requested window size.
+    root.maxsize(max(min_width, int(area.width/scale)),
+                 max(min_height, int(area.height/scale)))
     if initial:
         root.geometry(f"{min(1420, int((area.width-48)/scale))}x{min(900, int((area.height-100)/scale))}")
         return area
