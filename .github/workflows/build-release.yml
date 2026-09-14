@@ -47,46 +47,27 @@ jobs:
           }
           "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Preparar interface 3D em alta definição
-        shell: powershell
-        run: |
-          $source = "gui_reference_exact_v3.py"
-          $target = "gui_conversation_shell.py"
-          if (-not (Test-Path -LiteralPath $source)) {
-            throw "Interface 3D em alta definição ausente: $source"
-          }
-          if (-not (Test-Path -LiteralPath "gui_reference_exact_v2.py")) {
-            throw "Base visual da referência ausente: gui_reference_exact_v2.py"
-          }
-          if (-not (Test-Path -LiteralPath "jarvis_reference_orb.py")) {
-            throw "Asset legado da referência ausente: jarvis_reference_orb.py"
-          }
-
-          # IMPORTANTE: não altere main.py aqui. tools/prepare_release.py faz a
-          # ativação canônica de gui -> gui_conversation_shell durante o build.
-          # Alterar o import antes dele faz o preparador rejeitar o entry point.
-          Copy-Item -LiteralPath $source -Destination $target -Force
-
-          $main = Get-Content -LiteralPath "main.py" -Raw
-          if (-not $main.Contains("from gui import JarvisGUI") -and -not $main.Contains("from gui_conversation_shell import JarvisGUI")) {
-            throw "main.py não está em um estado aceito pelo prepare_release.py"
-          }
-          Write-Host "[JARVIS] Shell 3D de alta definição preparado sem antecipar a ativação do entry point."
-
       - name: Preparar Python para compilacao
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Validar sintaxe e cadeia de imports da interface
+      - name: Preflight completo antes de compilar
         shell: powershell
         run: |
-          python -m py_compile gui_reference_exact_v3.py gui_reference_exact_v2.py gui_conversation_shell.py jarvis_reference_orb.py main.py
-          if ($LASTEXITCODE -ne 0) { throw "Preflight da interface 3D falhou com codigo $LASTEXITCODE" }
-          python -c "import ast, pathlib; src=pathlib.Path('gui_conversation_shell.py').read_text(encoding='utf-8'); tree=ast.parse(src); imports=[n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]; assert 'gui_reference_exact_v2' in imports, 'shell 3D perdeu a base visual v2'; print('[JARVIS] Import da base visual v2: PASS')"
-          if ($LASTEXITCODE -ne 0) { throw "Preflight da cadeia de imports da interface falhou com codigo $LASTEXITCODE" }
-          Write-Host "[JARVIS] Sintaxe e cadeia de imports da interface 3D: PASS"
+          python -m pip install -r requirements.txt "PyYAML>=6,<7"
+          if ($LASTEXITCODE -ne 0) { throw "Dependencias de preflight indisponiveis" }
+          python tools/restore_large_assets.py
+          if ($LASTEXITCODE -ne 0) { throw "Assets invalidos" }
+          python tools/prepare_release.py --version "$env:RELEASE_VERSION" --repository "${{ github.repository }}" --run-number "${{ github.run_number }}"
+          if ($LASTEXITCODE -ne 0) { throw "Preparacao canonica falhou" }
+          python tools/ui_preflight.py --version "$env:RELEASE_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "Preflight falhou" }
+          foreach ($test in @("jarvis_hot_update_selftest.py", "jarvis_desktop_selftest.py", "jarvis_build16_selftest.py", "jarvis_v8_selftest.py", "jarvis_ui_selftest.py")) {
+            python $test
+            if ($LASTEXITCODE -ne 0) { throw "$test falhou" }
+          }
 
       - name: Instalar Inno Setup
         shell: powershell
