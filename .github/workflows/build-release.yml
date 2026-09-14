@@ -6,7 +6,7 @@ on:
       version:
         description: "Versão do JARVIS"
         required: true
-        default: "1.2.7"
+        default: "1.3.4"
   push:
     branches:
       - main
@@ -47,42 +47,28 @@ jobs:
           }
           "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Ativar interface exata da referência
+      - name: Preparar interface exata da referência
         shell: powershell
         run: |
-          $mainPath = "main.py"
-          $main = Get-Content -LiteralPath $mainPath -Raw
-          $old = "from gui import JarvisGUI"
-          $legacy = "from gui_conversation_shell import JarvisGUI"
-          $exact = "from gui_reference_exact import JarvisGUI"
-
-          if ($main.Contains($old)) {
-            $main = $main.Replace($old, $exact)
-          } elseif ($main.Contains($legacy)) {
-            $main = $main.Replace($legacy, $exact)
-          } elseif (-not $main.Contains($exact)) {
-            throw "Entry point do JARVIS não contém um import de GUI reconhecido."
+          $source = "gui_reference_exact_v2.py"
+          $target = "gui_conversation_shell.py"
+          if (-not (Test-Path -LiteralPath $source)) {
+            throw "Interface exata ausente: $source"
+          }
+          if (-not (Test-Path -LiteralPath "jarvis_reference_orb.py")) {
+            throw "Asset exato da esfera ausente: jarvis_reference_orb.py"
           }
 
-          # Remove qualquer hook do renderer PBR antigo. A referência aprovada
-          # agora é a fonte visual, inclusive para a esfera central.
-          $main = $main -replace '(?m)^\s*from jarvis_visual_runtime import install as _install_visual_runtime\s*\r?\n?', ''
-          $main = $main -replace '(?m)^\s*_install_visual_runtime\(JarvisGUI\)\s*\r?\n?', ''
-          Set-Content -LiteralPath $mainPath -Value $main -Encoding utf8
+          # IMPORTANTE: não altere main.py aqui. tools/prepare_release.py faz a
+          # ativação canônica de gui -> gui_conversation_shell durante o build.
+          # Alterar o import antes dele faz o preparador rejeitar o entry point.
+          Copy-Item -LiteralPath $source -Destination $target -Force
 
-          $verified = Get-Content -LiteralPath $mainPath -Raw
-          if (-not $verified.Contains($exact)) {
-            throw "Falha ao ativar gui_reference_exact no entry point."
+          $main = Get-Content -LiteralPath "main.py" -Raw
+          if (-not $main.Contains("from gui import JarvisGUI") -and -not $main.Contains("from gui_conversation_shell import JarvisGUI")) {
+            throw "main.py não está em um estado aceito pelo prepare_release.py"
           }
-          if ($verified.Contains("_install_visual_runtime(JarvisGUI)")) {
-            throw "Renderer PBR antigo ainda está ativo."
-          }
-          foreach ($required in @("gui_reference_exact.py", "gui_conversation_shell.py", "jarvis_reference_orb.py")) {
-            if (-not (Test-Path -LiteralPath $required)) {
-              throw "$required ausente."
-            }
-          }
-          Write-Host "[JARVIS] Entry point confirmado: gui_reference_exact.JarvisGUI"
+          Write-Host "[JARVIS] Shell exato preparado sem antecipar a ativação do entry point."
 
       - name: Preparar Python para compilacao
         uses: actions/setup-python@v7
@@ -93,9 +79,9 @@ jobs:
       - name: Validar sintaxe da interface de referência
         shell: powershell
         run: |
-          python -m py_compile main.py gui_reference_exact.py gui_conversation_shell.py jarvis_reference_orb.py
+          python -m py_compile gui_reference_exact_v2.py gui_conversation_shell.py jarvis_reference_orb.py
           if ($LASTEXITCODE -ne 0) { throw "Preflight da interface exata falhou com codigo $LASTEXITCODE" }
-          Write-Host "[JARVIS] Preflight da interface de referência: PASS"
+          Write-Host "[JARVIS] Sintaxe da interface exata: PASS"
 
       - name: Instalar Inno Setup
         shell: powershell
