@@ -21,18 +21,20 @@ ANTONIO_RATE = "+10%"
 
 
 class AntonioNeuralTTS:
-    """Small serial TTS worker that never falls back to a different voice."""
+    """Small TTS worker with one-chunk look-ahead and no alternate voice."""
 
     def __init__(
         self,
         project_dir,
         logger=None,
         on_start: Optional[Callable[[str], None]] = None,
+        on_chunk: Optional[Callable[[str], None]] = None,
         on_end: Optional[Callable[[], None]] = None,
     ):
         self.project_dir = Path(project_dir)
         self.logger = logger
         self.on_start = on_start
+        self.on_chunk = on_chunk
         self.on_end = on_end
         self.cache_dir = self.project_dir / "data" / "tts_cache_antonio"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -121,12 +123,7 @@ class AntonioNeuralTTS:
         return True
 
     def prefetch(self, text: str) -> bool:
-        """Warm Antonio MP3 cache without initializing playback or microphone.
-
-        Intended for tiny deterministic acknowledgements such as
-        "Certo, pesquisando.". Call from a background worker; synthesis may use
-        the network the first time, but no audio device or GUI path is touched.
-        """
+        """Warm Antonio MP3 cache without initializing playback or microphone."""
         clean = " ".join(str(text or "").split()).strip()
         if not clean:
             return False
@@ -192,7 +189,9 @@ class AntonioNeuralTTS:
                 return path
         except Exception:
             pass
-        tmp = path.with_suffix(".tmp.mp3")
+        # A pre-sintese do proximo trecho pode coexistir com um prewarm antigo.
+        # Use temporario exclusivo por thread para nunca disputar o mesmo .tmp.
+        tmp = path.with_name(f"{path.stem}.tmp.{threading.get_ident()}.mp3")
         try:
             if tmp.exists():
                 tmp.unlink()
@@ -202,6 +201,13 @@ class AntonioNeuralTTS:
         if not tmp.is_file() or tmp.stat().st_size <= 512:
             raise RuntimeError("Antonio Neural não retornou áudio válido")
         try:
+            # Outro worker pode ter preenchido o cache enquanto sintetizavamos.
+            if path.is_file() and path.stat().st_size > 512:
+                try:
+                    tmp.unlink()
+                except Exception:
+                    pass
+                return path
             tmp.replace(path)
         except Exception:
             path = tmp
@@ -227,6 +233,17 @@ class AntonioNeuralTTS:
             time.sleep(0.018)
         return generation == self._current_generation()
 
+    def _prefetch_next(self, text: str, generation: int, box: dict, ready: threading.Event) -> None:
+        """Synthesize one future chunk while the current chunk is playing."""
+        try:
+            if generation != self._current_generation():
+                return
+            box["audio"] = self._synthesize(text)
+        except Exception as exc:
+            box["error"] = exc
+        finally:
+            ready.set()
+
     def _worker(self) -> None:
         while True:
             generation, text = self._queue.get()
@@ -237,12 +254,22 @@ class AntonioNeuralTTS:
                 continue
             started = False
             try:
-                for chunk in chunks:
+                current_audio = self._synthesize(chunks[0])
+                for index, chunk in enumerate(chunks):
                     if generation != self._current_generation():
                         break
-                    audio = self._synthesize(chunk)
-                    if generation != self._current_generation():
-                        break
+
+                    next_box = {}
+                    next_ready = None
+                    if index + 1 < len(chunks):
+                        next_ready = threading.Event()
+                        threading.Thread(
+                            target=self._prefetch_next,
+                            args=(chunks[index + 1], generation, next_box, next_ready),
+                            name="JARVIS-ANTONIO-PREFETCH",
+                            daemon=True,
+                        ).start()
+
                     if not started:
                         started = True
                         self._speaking.set()
@@ -251,8 +278,29 @@ class AntonioNeuralTTS:
                                 self.on_start(text)
                         except Exception:
                             pass
-                    if not self._play(audio, generation):
+
+                    # Caption callback is tied to the chunk that is actually
+                    # about to be spoken, so it advances with the audio.
+                    try:
+                        if callable(self.on_chunk):
+                            self.on_chunk(chunk)
+                    except Exception:
+                        pass
+
+                    if not self._play(current_audio, generation):
                         break
+
+                    if next_ready is not None:
+                        while not next_ready.wait(0.025):
+                            if generation != self._current_generation():
+                                break
+                        if generation != self._current_generation():
+                            break
+                        if "error" in next_box:
+                            raise next_box["error"]
+                        current_audio = next_box.get("audio")
+                        if current_audio is None:
+                            current_audio = self._synthesize(chunks[index + 1])
             except Exception as exc:
                 self._log("warning", f"Antonio Neural indisponível; sem fallback de voz: {exc}")
             finally:
