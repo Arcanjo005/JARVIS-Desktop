@@ -43,9 +43,9 @@ jobs:
         run: |
           python tools/restore_large_assets.py
           if ($LASTEXITCODE -ne 0) { throw "Asset integrity failed" }
-          python tools/prepare_release.py --version 1.3.6 --repository "${{ github.repository }}" --run-number "${{ github.run_number }}"
+          python tools/prepare_release.py --version 1.3.7 --repository "${{ github.repository }}" --run-number "${{ github.run_number }}"
           if ($LASTEXITCODE -ne 0) { throw "Release preparation failed" }
-          python tools/ui_preflight.py --version 1.3.6
+          python tools/ui_preflight.py --version 1.3.7
           if ($LASTEXITCODE -ne 0) { throw "Preflight failed" }
           foreach ($test in @("jarvis_hot_update_selftest.py", "jarvis_desktop_selftest.py", "jarvis_build16_selftest.py", "jarvis_v8_selftest.py", "jarvis_voice_lifecycle_selftest.py")) {
             python $test
