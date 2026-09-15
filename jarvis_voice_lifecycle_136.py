@@ -1,18 +1,9 @@
-"""Voice/overlay lifecycle used by the 1.3.6 responsive release shell.
+"""Voice/overlay lifecycle used by the responsive release shell.
 
-The 1.2.3 compatibility layer intentionally made voice lazy, but its visual
-wrapper opened the voice UI immediately while VoiceEngine/Qt were still being
-created.  On real Windows machines that can hide the Tk window before a usable
-Qt overlay exists, expose the old Tk fallback for a frame, and leave typed TTS
-without any VoiceEngine at all.
-
-This mixin keeps expensive voice startup off the Tk thread while giving the
-release shell one owner for these transitions:
-- prewarm VoiceEngine after the first UI frames so wake/TTS become available;
-- coalesce concurrent/repeated startup requests;
-- never hide the chat until the Qt process is alive and accepted ``show``;
-- never fall back to the obsolete Tk orb when Qt startup fails;
-- keep TTS usable even when no microphone is available.
+The legacy compatibility layer made voice lazy, but its visual wrapper could
+open the voice UI while VoiceEngine/Qt were still being created. This mixin
+keeps those transitions off the Tk thread and, for startup safety, separates
+VoiceEngine prewarm from the optional Qt overlay process.
 """
 from __future__ import annotations
 
@@ -21,7 +12,10 @@ from typing import Callable, Optional
 
 
 class VoiceLifecycle136Mixin:
-    VOICE_PREWARM_DELAY_MS = 2200
+    # Do not overlap voice boot with AI/learning/advanced/app-index/updater jobs.
+    # On 4-core Windows machines that overlap can starve Tk long enough for the
+    # OS to mark the whole application as Not Responding.
+    VOICE_PREWARM_DELAY_MS = 12000
     VOICE_OVERLAY_SETTLE_MS = 140
 
     def __init__(self, *args, **kwargs):
@@ -31,12 +25,10 @@ class VoiceLifecycle136Mixin:
         self._v136_voice_waiters = []
         self._v136_voice_open_pending = False
         self._v136_pending_speech = None
+        self._v136_overlay_requested = False
         super().__init__(*args, **kwargs)
         self._v136_schedule_prewarm()
 
-    # ------------------------------------------------------------------
-    # Thread/UI helpers
-    # ------------------------------------------------------------------
     def _v136_log(self, level: str, message: str) -> None:
         try:
             logger = getattr(self, "logger", None)
@@ -67,7 +59,6 @@ class VoiceLifecycle136Mixin:
         except Exception:
             pass
 
-        # Direct invocation is safe when the caller already is the Tk thread.
         try:
             if threading.get_ident() == getattr(self, "_main_thread_id", threading.get_ident()):
                 invoke()
@@ -75,7 +66,6 @@ class VoiceLifecycle136Mixin:
         except Exception:
             pass
 
-        # Last resort for small test/fallback shells. Production has _post_ui_event.
         try:
             root = getattr(self, "root", None)
             if root is not None:
@@ -93,19 +83,23 @@ class VoiceLifecycle136Mixin:
             root.after(int(delay_ms), callback)
 
     def _v136_schedule_prewarm(self) -> None:
-        """Start wake/TTS after the UI is visible, not in the boot critical path."""
+        """Start only VoiceEngine after the boot burst has settled.
+
+        The Qt overlay is intentionally NOT prewarmed. It is created only when
+        the user explicitly opens visual voice mode. Typed TTS and wake word do
+        not need a PySide process.
+        """
         try:
             self._v136_later(
                 "voice-runtime-prewarm",
                 self.VOICE_PREWARM_DELAY_MS,
-                lambda: self._v136_ensure_voice_runtime(reason="startup-prewarm"),
+                lambda: self._v136_ensure_voice_runtime(
+                    reason="startup-prewarm", require_overlay=False
+                ),
             )
         except Exception as exc:
             self._v136_log("warning", f"Prewarm de voz nao foi agendado: {exc}")
 
-    # ------------------------------------------------------------------
-    # Runtime ownership
-    # ------------------------------------------------------------------
     def _v136_engine_ready(self) -> bool:
         engine = getattr(self, "voice_engine", None)
         if engine is None:
@@ -142,12 +136,6 @@ class VoiceLifecycle136Mixin:
         on_ready: Optional[Callable[[], None]] = None,
         on_error: Optional[Callable[[str], None]] = None,
     ) -> bool:
-        """Ensure VoiceEngine (and optionally Qt) exactly once per transition.
-
-        Returns True only when the requested resources were already ready.  If
-        startup is needed, callbacks are coalesced and dispatched on the UI
-        thread when the worker finishes.
-        """
         engine_ready = self._v136_engine_ready()
         overlay_ready = self._v136_overlay_ready()
         if engine_ready and (overlay_ready or not require_overlay):
@@ -156,7 +144,8 @@ class VoiceLifecycle136Mixin:
             return True
 
         with self._v136_voice_lock:
-            # Re-check after taking the lock to close the first-click race.
+            if require_overlay:
+                self._v136_overlay_requested = True
             engine_ready = self._v136_engine_ready()
             overlay_ready = self._v136_overlay_ready()
             if engine_ready and (overlay_ready or not require_overlay):
@@ -200,7 +189,14 @@ class VoiceLifecycle136Mixin:
             except Exception as exc:
                 engine_error = str(exc) or type(exc).__name__
 
-            if not engine_error and not self._v136_overlay_ready():
+            # The overlay is expensive and completely unnecessary for wake/TTS.
+            # Start it only after an explicit visual-mode request.
+            with self._v136_voice_lock:
+                overlay_needed = bool(self._v136_overlay_requested) or any(
+                    needs for needs, _, _ in self._v136_voice_waiters
+                )
+
+            if not engine_error and overlay_needed and not self._v136_overlay_ready():
                 try:
                     setup_qt = getattr(self, "_setup_qt_voice_overlay", None)
                     if callable(setup_qt):
@@ -215,14 +211,16 @@ class VoiceLifecycle136Mixin:
                 self._v136_voice_waiters.clear()
                 self._v136_voice_state = "ready" if not engine_error else "failed"
                 self._v136_voice_error = engine_error or overlay_error
+                self._v136_overlay_requested = False
 
             if engine_error:
                 self._v136_log("warning", f"Inicializacao de voz falhou: {engine_error}")
             elif overlay_error:
-                # TTS/wake remain useful even when the visual process fails.
                 self._v136_log("warning", f"Voz pronta; visual 3D indisponivel: {overlay_error}")
-            else:
+            elif overlay_needed:
                 self._v136_log("info", "VoiceEngine e overlay 3D prontos.")
+            else:
+                self._v136_log("info", "VoiceEngine pronto; overlay 3D permanece sob demanda.")
 
             engine_ok = self._v136_engine_ready()
             overlay_ok = self._v136_overlay_ready()
@@ -237,9 +235,6 @@ class VoiceLifecycle136Mixin:
         self._v136_start_worker(worker)
         return False
 
-    # ------------------------------------------------------------------
-    # Visual transition: Qt only, chat is never hidden before readiness.
-    # ------------------------------------------------------------------
     def _v136_close_stale_tk_orb(self) -> None:
         overlay = getattr(self, "voice_overlay", None)
         if overlay is not None:
@@ -282,8 +277,6 @@ class VoiceLifecycle136Mixin:
             self._v136_voice_open_pending = False
             return super()._close_voice_overlay()
 
-        # A second click during startup cancels the pending visual transition;
-        # the background VoiceEngine may still finish and remain useful for wake/TTS.
         if self._v136_voice_open_pending:
             self._v136_voice_open_pending = False
             try:
@@ -340,7 +333,6 @@ class VoiceLifecycle136Mixin:
             self._v136_visual_error(str(exc))
             return False
 
-        # From this point there is exactly one orb owner: the Qt child.
         self.voice_visual_mode = True
         self._qt_overlay_active = True
         try:
@@ -393,10 +385,6 @@ class VoiceLifecycle136Mixin:
             on_error=lambda detail: self._v136_visual_error(detail),
         )
 
-    # ------------------------------------------------------------------
-    # TTS: text chat starts VoiceEngine instead of waiting six seconds for
-    # a lazy runtime that nobody requested.
-    # ------------------------------------------------------------------
     def _deliver_text_speech(self, text):
         if bool(getattr(self, "_chat_tts_enabled", False)) and not self._v136_engine_ready():
             self._v136_ensure_voice_runtime(reason="typed-response", require_overlay=False)
@@ -409,8 +397,6 @@ class VoiceLifecycle136Mixin:
         if self._v136_engine_ready():
             return super()._speak(clean)
 
-        # Keep only the latest deferred non-stream speech. This prevents an old
-        # reminder/status line from talking after a newer turn took ownership.
         self._v136_pending_speech = clean
 
         def ready():
