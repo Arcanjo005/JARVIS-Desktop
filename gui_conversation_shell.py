@@ -105,10 +105,50 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             return None
 
     def _deliver_text_speech(self, text):
-        """Typed chat must never start microphone/STT just to synthesize speech."""
-        if not bool(getattr(self, "_chat_tts_enabled", False)):
+        """Preserve typed-turn guards while avoiding microphone/STT startup."""
+        ticket = getattr(self, "_text_speech_token", None)
+        self._text_speech_token = None
+        if (
+            not ticket
+            or not text
+            or bool(getattr(self, "_restoring_history", False))
+            or not bool(getattr(self, "_chat_tts_enabled", False))
+        ):
             return None
-        return self._speak(text)
+
+        self._speech_delivery = ticket
+        if (
+            self._speech_delivery != ticket
+            or ticket[1] != self.active_conversation_id
+            or not self._work_is_current(ticket[0])
+        ):
+            return None
+
+        spoken = self._voice_spoken_summary(text)
+        if not spoken:
+            self._speech_delivery = None
+            return None
+
+        voice_engine = getattr(self, "voice_engine", None)
+        use_voice_engine = bool(
+            voice_engine is not None
+            and (
+                not hasattr(voice_engine, "_started")
+                or bool(getattr(voice_engine, "_started", False))
+            )
+        )
+
+        self._speech_delivery = None
+        try:
+            if use_voice_engine:
+                return voice_engine.speak(spoken, wait=False, fast=True)
+            return self._get_antonio_tts().speak(spoken, interrupt=True)
+        except Exception as exc:
+            try:
+                self._v136_log("warning", f"Typed response TTS: {exc}")
+            except Exception:
+                pass
+            return None
 
     def _create_chat_bubble(self, sender, message, is_user=False, is_jarvis=False,
                             is_system=False, timestamp=None, suppress_autoscroll=False):
