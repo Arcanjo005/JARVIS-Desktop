@@ -30,7 +30,8 @@ def main():
           "dock inferior nao contem os controles da referencia")
     check("render_reference_scene" in shell and "pedestal" in scene.lower() and "waveform" in scene.lower(),
           "cenario cinematografico de referencia nao esta conectado")
-    check("_fast_standalone_question" in shell and "conversation_history = list(conversation_history or [])[-2:]" in shell,
+    compact_shell = "".join(shell.split())
+    check("_fast_standalone_question" in shell and "conversation_history=list(conversation_historyor[])[-2:]" in compact_shell,
           "fast path de perguntas simples ausente")
     check("v8:browser_search:" in shell and "Certo, pesquisando." in shell,
           "ack imediato de pesquisa ausente")
