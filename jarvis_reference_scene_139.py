@@ -9,6 +9,45 @@ import math
 from PIL import Image, ImageDraw, ImageFilter
 
 
+def _install_ctk_root_place_guard():
+    """Keep root-level CTk place widgets inside the real Tk client area.
+
+    CustomTkinter 5.2.2 replays cached logical ``place`` arguments whenever DPI
+    scaling changes.  The 1.3.9 updater is intentionally a root overlay, so that
+    replay can move it outside the physical client width on Windows.  Re-anchor
+    only root-level placed CTk buttons after CTk has applied its own scaling.
+    """
+    try:
+        import customtkinter as ctk
+        button_cls = ctk.CTkButton
+        if getattr(button_cls, "_jarvis_root_place_guard", False):
+            return
+        original = button_cls._set_scaling
+
+        def guarded_set_scaling(self, *args, **kwargs):
+            result = original(self, *args, **kwargs)
+            try:
+                master = self.master
+                if isinstance(master, ctk.CTk) and self.winfo_manager() == "place":
+                    master.update_idletasks()
+                    root_w = max(1, int(master.winfo_width()))
+                    widget_w = max(1, int(self.winfo_width()))
+                    left = max(0, root_w - 12 - widget_w)
+                    self.tk.call("place", "configure", self._w,
+                                 "-x", left, "-y", 12, "-anchor", "nw")
+            except Exception:
+                pass
+            return result
+
+        button_cls._set_scaling = guarded_set_scaling
+        button_cls._jarvis_root_place_guard = True
+    except Exception:
+        pass
+
+
+_install_ctk_root_place_guard()
+
+
 def _line(draw, xy, fill, width):
     try:
         draw.line(xy, fill=fill, width=max(1, int(width)), joint="curve")
@@ -25,13 +64,10 @@ def render_reference_scene(width: int, height: int) -> Image.Image:
 
     image = Image.new("RGB", (w, h), (2, 8, 15))
     d = ImageDraw.Draw(image)
-
-    # Night glass wall.
     horizon = int(h * 0.58)
     d.rectangle((0, 0, w, horizon), fill=(3, 14, 27))
     d.rectangle((0, horizon, w, h), fill=(4, 9, 14))
 
-    # Window panes and steel columns.
     panes = 7
     for i in range(panes + 1):
         x = int(i * w / panes)
@@ -41,7 +77,6 @@ def render_reference_scene(width: int, height: int) -> Image.Image:
             x2 = int((i + 1) * w / panes)
             d.rectangle((x + col, int(h * 0.06), x2 - col, horizon), fill=(3, 18 + (i % 2) * 3, 35 + (i % 3) * 4))
 
-    # City skyline through the windows.
     city_seed = 0x139
     def rnd(n):
         nonlocal city_seed
@@ -67,38 +102,32 @@ def render_reference_scene(width: int, height: int) -> Image.Image:
                     d.rectangle((px, py, px + 1, py + 2), fill=color)
         x += bw + max(3, int(w * 0.009))
 
-    # Ceiling architecture and warm linear strips from the reference.
     _line(d, [(0, int(h * 0.04)), (int(w * 0.48), int(h * 0.12)), (w, int(h * 0.02))], (26, 31, 38), h * 0.035)
     _line(d, [(int(w * 0.55), 0), (int(w * 0.82), int(h * 0.10)), (w, int(h * 0.06))], (35, 31, 28), h * 0.025)
     for off, alpha in ((0.0, (238, 174, 99)), (0.012, (114, 73, 41))):
         _line(d, [(int(w * 0.57), int(h * (0.035 + off))), (int(w * 0.83), int(h * (0.105 + off)))], alpha, max(1, h * 0.004))
         _line(d, [(int(w * 0.83), int(h * (0.105 + off))), (int(w * 0.83), int(h * 0.54))], alpha, max(1, h * 0.004))
 
-    # Right wall / display zone, intentionally generic (no copyrighted logo).
     d.rounded_rectangle((int(w * 0.73), int(h * 0.16), int(w * 0.96), int(h * 0.59)), radius=max(4, int(w * 0.015)), fill=(5, 10, 15), outline=(31, 38, 43), width=max(1, int(w * 0.002)))
     d.ellipse((int(w * 0.79), int(h * 0.23), int(w * 0.90), int(h * 0.40)), outline=(25, 38, 49), width=max(2, int(w * 0.004)))
     _line(d, [(int(w * 0.81), int(h * 0.38)), (int(w * 0.845), int(h * 0.25)), (int(w * 0.885), int(h * 0.38))], (28, 43, 55), max(2, w * 0.005))
 
-    # Glossy desk/table with perspective reflection.
     desk_top = int(h * 0.68)
     d.polygon([(0, desk_top), (w, int(h * 0.62)), (w, h), (0, h)], fill=(3, 8, 13))
     for y in range(desk_top, h, max(4, int(h * 0.035))):
         fade = max(8, 25 - int((y - desk_top) / max(1, h - desk_top) * 17))
         _line(d, [(0, y), (w, int(y - (y - desk_top) * 0.16))], (5, 35 + fade, 60 + fade), 1)
 
-    # Central hologram pedestal beneath the independently animated orb.
     cx = w // 2
     py = int(h * 0.72)
     pw = int(w * 0.34)
     ph = max(8, int(h * 0.075))
     for mul, color, linew in ((1.22, (12, 67, 111), 2), (1.0, (22, 137, 219), 2), (0.72, (36, 193, 255), 1)):
-        rx = int(pw * mul / 2)
-        ry = int(ph * mul / 2)
+        rx = int(pw * mul / 2); ry = int(ph * mul / 2)
         d.ellipse((cx - rx, py - ry, cx + rx, py + ry), outline=color, width=max(1, int(linew * scale)))
     d.polygon([(cx - pw // 2, py), (cx + pw // 2, py), (cx + int(pw * 0.39), py + ph), (cx - int(pw * 0.39), py + ph)], fill=(5, 13, 20), outline=(23, 68, 96))
     d.ellipse((cx - int(pw * 0.39), py + int(ph * 0.55), cx + int(pw * 0.39), py + int(ph * 1.28)), outline=(16, 119, 190), width=max(1, int(w * 0.002)))
 
-    # Voice waveform through the orb, matching the reference composition.
     wave_y = int(h * 0.44)
     _line(d, [(int(w * 0.08), wave_y), (int(w * 0.92), wave_y)], (14, 75, 123), 1)
     for i in range(180):
@@ -107,12 +136,10 @@ def render_reference_scene(width: int, height: int) -> Image.Image:
         envelope = 1.0 - min(1.0, abs(t - 0.5) * 1.7)
         pulse = abs(math.sin(t * math.pi * 31) * math.sin(t * math.pi * 7))
         amp = int(h * 0.055 * pulse * (0.35 + 0.65 * (1.0 - envelope)))
-        if 0.30 < t < 0.70:
-            amp = int(amp * 0.28)  # orb itself occupies the center
+        if 0.30 < t < 0.70: amp = int(amp * 0.28)
         color = (30, 149, 233) if i % 3 else (73, 207, 255)
         _line(d, [(x, wave_y - amp), (x, wave_y + amp)], color, max(1, w * 0.0012))
 
-    # Blue floor reflections below the hologram.
     glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
     for r, alpha in ((0.19, 60), (0.12, 80), (0.06, 105)):
@@ -120,8 +147,6 @@ def render_reference_scene(width: int, height: int) -> Image.Image:
         gd.ellipse((cx - rx, int(h * 0.66), cx + rx, int(h * 0.93)), fill=(0, 116, 255, alpha))
     glow = glow.filter(ImageFilter.GaussianBlur(max(6, int(min(w, h) * 0.045))))
     image = Image.alpha_composite(image.convert("RGBA"), glow).convert("RGB")
-
-    # Slight cinematic defocus: the orb/UI remain crisp because they are separate layers.
     image = image.filter(ImageFilter.GaussianBlur(max(0.5, min(w, h) * 0.0022)))
     return image.resize((width, height), Image.Resampling.LANCZOS)
 
