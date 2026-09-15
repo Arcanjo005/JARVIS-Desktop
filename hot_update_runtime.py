@@ -60,6 +60,31 @@ def _clear_hot_environment() -> None:
     os.environ.pop("JARVIS_EFFECTIVE_VERSION", None)
 
 
+def _activate_overlay_139_alias() -> None:
+    """Route only the tagged frozen overlay child through the 1.3.9 wrapper.
+
+    main.py intentionally remains untouched. The child enters this module before
+    importing ``voice_overlay_qt``; after preserving the real renderer module we
+    alias the import name to the small compatibility layer. Normal app startup is
+    completely unaffected because the environment flag exists only in the child.
+    """
+    if str(os.environ.get("JARVIS_OVERLAY_139") or "").strip() != "1":
+        return
+    try:
+        import voice_overlay_qt as legacy_overlay
+        import jarvis_voice_overlay_139 as overlay_139
+        # The wrapper already holds the legacy renderer object internally.
+        # main._run_overlay_child() imports this name only after activation.
+        sys.modules["voice_overlay_qt"] = overlay_139
+    except Exception:
+        # Fail open to the original overlay; voice remains usable even if this
+        # cosmetic movement layer cannot be activated.
+        try:
+            sys.modules["voice_overlay_qt"] = legacy_overlay
+        except Exception:
+            pass
+
+
 def activate_hot_runtime(app_dir: Path | str, *, track_boot: bool = True):
     """Activate only a hot runtime newer than the installed full bundle.
 
@@ -85,6 +110,7 @@ def activate_hot_runtime(app_dir: Path | str, *, track_boot: bool = True):
             _clear_hot_environment()
             os.environ["JARVIS_BUNDLED_VERSION"] = bundled
             os.environ["JARVIS_EFFECTIVE_VERSION"] = bundled
+            _activate_overlay_139_alias()
             return None
 
     activation = _core.activate_hot_runtime(app_dir, track_boot=track_boot)
@@ -93,4 +119,5 @@ def activate_hot_runtime(app_dir: Path | str, *, track_boot: bool = True):
         os.environ.setdefault("JARVIS_EFFECTIVE_VERSION", bundled)
     elif activation is not None and bundled:
         os.environ["JARVIS_BUNDLED_VERSION"] = bundled
+    _activate_overlay_139_alias()
     return activation
