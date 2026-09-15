@@ -30,9 +30,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         super().__init__(*args, **kwargs)
         self._install_fast_chat_path()
 
-    # ------------------------------------------------------------------
-    # Approved reference interface
-    # ------------------------------------------------------------------
     def _create_main_layout(self):
         super()._create_main_layout()
 
@@ -43,12 +40,7 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             old_header = None
 
         try:
-            self.side_panel.configure(
-                width=282,
-                corner_radius=0,
-                fg_color="#020b14",
-                border_width=0,
-            )
+            self.side_panel.configure(width=282, corner_radius=0, fg_color="#020b14", border_width=0)
         except Exception:
             pass
 
@@ -106,15 +98,10 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
                 text_color="#d9edf8",
                 placeholder_text_color="#7f9bad",
             )
-            self.reference_search_entry.pack(
-                fill="x", padx=17, pady=(0, 10), after=self._new_chat_button
-            )
+            self.reference_search_entry.pack(fill="x", padx=17, pady=(0, 10), after=self._new_chat_button)
             self.reference_search_entry.bind(
                 "<Button-1>",
-                lambda event=None: self.root.after(
-                    1,
-                    lambda: self._open_conversation_search_popover(self.reference_search_entry),
-                ),
+                lambda event=None: self.root.after(1, lambda: self._open_conversation_search_popover(self.reference_search_entry)),
                 add="+",
             )
             self.reference_search_entry.bind(
@@ -126,9 +113,7 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             self.reference_search_entry = None
 
         try:
-            self.copy_conversation_button = self._button(
-                self.side_panel, "Copiar conversa", self._copy_conversation, width=110
-            )
+            self.copy_conversation_button = self._button(self.side_panel, "Copiar conversa", self._copy_conversation, width=110)
             self.copy_conversation_button.configure(
                 height=34,
                 fg_color="#061522",
@@ -136,21 +121,13 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
                 text_color="#a9c5d6",
             )
             anchor = self.reference_search_entry or self._new_chat_button
-            self.copy_conversation_button.pack(
-                fill="x", padx=17, pady=(0, 8), after=anchor
-            )
-            self.root.bind(
-                "<Control-Shift-C>",
-                lambda event=None: self._copy_conversation(),
-                add="+",
-            )
+            self.copy_conversation_button.pack(fill="x", padx=17, pady=(0, 8), after=anchor)
+            self.root.bind("<Control-Shift-C>", lambda event=None: self._copy_conversation(), add="+")
         except Exception:
             self.copy_conversation_button = None
 
         try:
-            self.conversation_list_frame.configure(
-                fg_color="transparent", scrollbar_button_color="#123650"
-            )
+            self.conversation_list_frame.configure(fg_color="transparent", scrollbar_button_color="#123650")
         except Exception:
             pass
 
@@ -190,7 +167,10 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             pass
 
         try:
-            reference_update = self._button(self._center, "↻", self._update_now, 46)
+            # Root-anchored on purpose: _center can temporarily report a wider
+            # requested size during CTk scaling changes. Tying the updater to the
+            # root guarantees it never leaves the physical app window.
+            reference_update = self._button(self.root, "↻", self._update_now, 46)
             reference_update.configure(
                 height=46,
                 corner_radius=23,
@@ -199,18 +179,14 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
                 hover_color="#0b2d48",
                 border_color="#1d5276",
             )
-            reference_update.place(relx=0.965, rely=0.025, anchor="ne")
+            reference_update.place(relx=0.985, rely=0.025, anchor="ne")
+            reference_update.lift()
             self.update_button = reference_update
         except Exception:
             pass
 
         try:
-            self.input_shell.configure(
-                fg_color="#061321",
-                corner_radius=18,
-                border_width=1,
-                border_color="#244d68",
-            )
+            self.input_shell.configure(fg_color="#061321", corner_radius=18, border_width=1, border_color="#244d68")
             self.quick_menu_button.configure(
                 text="＋", width=48, height=48, corner_radius=24,
                 fg_color="#0a1d31", hover_color="#12395d",
@@ -267,18 +243,10 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
                     height=28,
                 )
 
-            self._reference_speech_switch = make_switch(
-                "JARVIS fala", self._chat_tts_var, self._toggle_text_speech
-            )
-            self._reference_caption_switch = make_switch(
-                "Legenda na tela", self._captions_var, self._toggle_captions
-            )
-            self._reference_fast_switch = make_switch(
-                "Modo Rápido", self._reference_fast_var, self._toggle_reference_fast
-            )
-            self._reference_detail_switch = make_switch(
-                "Modo Detalhado", self._reference_detail_var, self._toggle_reference_detail
-            )
+            self._reference_speech_switch = make_switch("JARVIS fala", self._chat_tts_var, self._toggle_text_speech)
+            self._reference_caption_switch = make_switch("Legenda na tela", self._captions_var, self._toggle_captions)
+            self._reference_fast_switch = make_switch("Modo Rápido", self._reference_fast_var, self._toggle_reference_fast)
+            self._reference_detail_switch = make_switch("Modo Detalhado", self._reference_detail_var, self._toggle_reference_detail)
             self._reference_enter_label = ctk.CTkLabel(
                 self.reference_switch_bar,
                 text="Enter para enviar",
@@ -290,7 +258,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             self.reference_switch_bar = None
 
     def _layout_reference_switches(self, logical_w):
-        """Keep the reference dock exact on normal screens and fluid on narrow/HiDPI."""
         bar = getattr(self, "reference_switch_bar", None)
         switches = (
             getattr(self, "_reference_speech_switch", None),
@@ -321,22 +288,12 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             bar.configure(height=46)
             for idx, sw in enumerate(switches):
                 sw.configure(font=ctk.CTkFont(size=11))
-                sw.grid(
-                    row=0,
-                    column=idx,
-                    padx=(14 if idx == 0 else 8, 8),
-                    pady=8,
-                    sticky="w",
-                )
+                sw.grid(row=0, column=idx, padx=(14 if idx == 0 else 8, 8), pady=8, sticky="w")
             bar.grid_columnconfigure(4, weight=1)
             if label is not None:
                 label.grid(row=0, column=4, padx=(8, 14), sticky="e")
             return
 
-        # Narrow screens: same four real controls, two columns instead of one
-        # over-wide row. This prevents the switch bar from increasing the
-        # requested width of the entire center pane and pushing composer/update
-        # controls beyond the physical window.
         bar.configure(height=78)
         bar.grid_columnconfigure(0, weight=1)
         bar.grid_columnconfigure(1, weight=1)
@@ -344,13 +301,7 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         positions = ((0, 0), (0, 1), (1, 0), (1, 1))
         for sw, (row, column) in zip(switches, positions):
             sw.configure(font=compact_font)
-            sw.grid(
-                row=row,
-                column=column,
-                padx=(10, 6),
-                pady=(5, 3),
-                sticky="w",
-            )
+            sw.grid(row=row, column=column, padx=(10, 6), pady=(5, 3), sticky="w")
 
     def _toggle_reference_fast(self):
         enabled = bool(self._reference_fast_var.get())
@@ -377,7 +328,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             pass
 
     def _relayout(self):
-        """Reference composition: sidebar + dominant hero + compact transcript + dock."""
         scale = self._center._get_widget_scaling()
         logical_w = self.root.winfo_width() / scale
         logical_h = self.root.winfo_height() / scale
@@ -409,6 +359,10 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         self._refresh_caption()
         self.agent_hud_step.configure(wraplength=max(140, width - 30))
         self._resize_composer()
+        try:
+            self.update_button.lift()
+        except Exception:
+            pass
 
     def _place_history(self):
         self.side_panel.grid_remove()
@@ -448,12 +402,10 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         super()._visual_tick()
         try:
             self._hero.coords(self._orb_item, self._hero.winfo_width() / 2, self._hero.winfo_height() / 2)
+            self.update_button.lift()
         except Exception:
             pass
 
-    # ------------------------------------------------------------------
-    # Conservative boot: lightweight recovery services only
-    # ------------------------------------------------------------------
     def _v136_schedule_prewarm(self):
         try:
             self._v136_log("info", "Boot seguro: microfone/STT sob demanda; Antonio usa caminho leve.")
@@ -487,9 +439,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             run_worker("JARVIS-BOOT-DESKTOP-SAFE", desktop_target)
             run_worker("JARVIS-BOOT-AI-SAFE", core_target)
 
-    # ------------------------------------------------------------------
-    # Short standalone chat fast path
-    # ------------------------------------------------------------------
     @staticmethod
     def _fast_standalone_question(message: str) -> bool:
         text = " ".join(str(message or "").split()).strip()
@@ -544,9 +493,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         core.process_message_stream = fast_stream
         core._jarvis_139_fast_path = True
 
-    # ------------------------------------------------------------------
-    # Antonio Neural-only TTS
-    # ------------------------------------------------------------------
     def _get_antonio_tts(self):
         engine = self._antonio_tts
         if engine is not None:
@@ -634,9 +580,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         except Exception:
             return None
 
-    # ------------------------------------------------------------------
-    # Voice overlay 1.3.9
-    # ------------------------------------------------------------------
     def _setup_qt_voice_overlay(self):
         existing = getattr(self, "qt_voice_overlay", None)
         if existing is not None:
@@ -689,9 +632,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         y = bottom - margin - visible_radius - orb_cy
         return max(left - orb_cx + visible_radius, x), max(top - orb_cy + visible_radius, y)
 
-    # ------------------------------------------------------------------
-    # Chat bubbles remain selectable and real.
-    # ------------------------------------------------------------------
     def _create_chat_bubble(self, sender, message, is_user=False, is_jarvis=False,
                             is_system=False, timestamp=None, suppress_autoscroll=False):
         row = ctk.CTkFrame(self.chat_scroll, fg_color="transparent")
