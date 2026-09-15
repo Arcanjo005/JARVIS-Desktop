@@ -40,20 +40,50 @@ def main():
     check("from voice_overlay_qt import _run_child" in main_src,
           "bootstrap principal foi alterado desnecessariamente")
 
-    from jarvis_voice_overlay_139 import clamp_overlay_position, corner_overlay_position
+    from jarvis_voice_overlay_139 import (
+        _visible_orb_geometry,
+        clamp_overlay_position,
+        corner_overlay_position,
+    )
 
-    # Conversation canvas is 420x160, but only the sphere near (210,38) must be
-    # kept visible. The transparent subtitle canvas is allowed beyond the edge.
+    # Conversation canvas is 420x160, but only the visible sphere must stay on
+    # screen. The transparent subtitle canvas is allowed to cross the desktop
+    # edges. At the top there is no transparent area above the orb (its visible
+    # circle starts at y=0 inside the canvas), so a small safety margin there is
+    # a physical orb bound, not the old invisible canvas wall.
     left, top, right, bottom = 0, 0, 1920, 1040
-    x, y = corner_overlay_position(420, 160, left, top, right, bottom, 0)
-    orb_cx, orb_cy, radius = 210, 38, 38
+    width, height = 420, 160
+    orb_cx, orb_cy, radius = _visible_orb_geometry(width, height)
+
+    x, y = corner_overlay_position(width, height, left, top, right, bottom, 0)
     check(x + orb_cx + radius <= right, "esfera ultrapassou borda direita")
     check(y + orb_cy + radius <= bottom, "esfera ultrapassou borda inferior")
-    check(x + 420 > right, "canvas transparente ainda esta artificialmente preso na tela")
+    check(x + width > right, "canvas transparente ainda esta artificialmente preso na direita")
+    check(y + height > bottom, "canvas transparente ainda esta artificialmente preso embaixo")
 
-    free_x, free_y = clamp_overlay_position(-180, -20, 420, 160, left, top, right, bottom, 0)
-    check(free_x < 0, "barreira invisivel esquerda ainda limita o canvas em vez da esfera")
-    check(free_y <= 0, "barreira invisivel superior ainda limita o canvas em vez da esfera")
+    # Left edge: the window/canvas may become negative while the sphere stays
+    # visible. This is the exact regression that removes the apparent wall.
+    free_x, free_y = clamp_overlay_position(-9999, -9999, width, height, left, top, right, bottom, 0)
+    check(free_x < left, "barreira invisivel esquerda ainda limita o canvas em vez da esfera")
+    check(free_x + orb_cx - radius >= left,
+          "esfera ficou parcialmente fora da borda esquerda")
+
+    # Top edge: because orb_cy == radius, the sphere itself begins at canvas y=0.
+    # The clamp may keep only the small safety margin, but must not reserve any
+    # extra transparent-caption height.
+    orb_top = free_y + orb_cy - radius
+    check(0 <= orb_top <= 8,
+          "limite superior reservou espaco invisivel alem da margem fisica da esfera")
+    check(free_y < height,
+          "limite superior esta usando a altura inteira do canvas")
+
+    # Bottom edge proves the subtitle canvas can extend far beyond the screen
+    # while the sphere itself remains fully visible.
+    _, low_y = clamp_overlay_position(0, 99999, width, height, left, top, right, bottom, 0)
+    check(low_y + height > bottom,
+          "barreira invisivel inferior ainda limita o canvas em vez da esfera")
+    check(low_y + orb_cy + radius <= bottom,
+          "esfera ultrapassou borda inferior ao liberar canvas")
 
     print("JARVIS 1.3.9 SELFTEST: PASS")
 
