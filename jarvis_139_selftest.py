@@ -14,6 +14,7 @@ def check(condition, message):
 
 def main():
     shell = (ROOT / "gui_conversation_shell.py").read_text(encoding="utf-8")
+    scene = (ROOT / "jarvis_reference_scene_139.py").read_text(encoding="utf-8")
     overlay = (ROOT / "jarvis_voice_overlay_139.py").read_text(encoding="utf-8")
     hot = (ROOT / "hot_update_runtime.py").read_text(encoding="utf-8")
     antonio = (ROOT / "jarvis_antonio_tts.py").read_text(encoding="utf-8")
@@ -23,6 +24,12 @@ def main():
           "bandeja/hotkey nao sao restaurados no boot seguro")
     check("Copiar conversa" in shell and "_copy_conversation" in shell,
           "botao de copiar conversa nao esta exposto")
+    check("Nova conversa" in shell and "Buscar conversas" in shell and "JARVIS" in shell,
+          "barra lateral deixou de representar conversas como na referencia")
+    check("JARVIS fala" in shell and "Legenda na tela" in shell and "Modo Rápido" in shell and "Modo Detalhado" in shell,
+          "dock inferior nao contem os controles da referencia")
+    check("render_reference_scene" in shell and "pedestal" in scene.lower() and "waveform" in scene.lower(),
+          "cenario cinematografico de referencia nao esta conectado")
     check("_fast_standalone_question" in shell and "conversation_history = list(conversation_history or [])[-2:]" in shell,
           "fast path de perguntas simples ausente")
     check("v8:browser_search:" in shell and "Certo, pesquisando." in shell,
@@ -35,8 +42,6 @@ def main():
           "bootstrap do filho nao redireciona overlay 1.3.9")
     check("def prefetch(" in antonio and "self._synthesize(chunk)" in antonio,
           "prefetch Antonio nao esta implementado")
-    # main.py remains on the stable child entry point; routing happens only in
-    # the tagged child through hot_update_runtime.
     check("from voice_overlay_qt import _run_child" in main_src,
           "bootstrap principal foi alterado desnecessariamente")
 
@@ -46,11 +51,6 @@ def main():
         corner_overlay_position,
     )
 
-    # Conversation canvas is 420x160, but only the visible sphere must stay on
-    # screen. The transparent subtitle canvas is allowed to cross the desktop
-    # edges. At the top there is no transparent area above the orb (its visible
-    # circle starts at y=0 inside the canvas), so a small safety margin there is
-    # a physical orb bound, not the old invisible canvas wall.
     left, top, right, bottom = 0, 0, 1920, 1040
     width, height = 420, 160
     orb_cx, orb_cy, radius = _visible_orb_geometry(width, height)
@@ -61,24 +61,17 @@ def main():
     check(x + width > right, "canvas transparente ainda esta artificialmente preso na direita")
     check(y + height > bottom, "canvas transparente ainda esta artificialmente preso embaixo")
 
-    # Left edge: the window/canvas may become negative while the sphere stays
-    # visible. This is the exact regression that removes the apparent wall.
     free_x, free_y = clamp_overlay_position(-9999, -9999, width, height, left, top, right, bottom, 0)
     check(free_x < left, "barreira invisivel esquerda ainda limita o canvas em vez da esfera")
     check(free_x + orb_cx - radius >= left,
           "esfera ficou parcialmente fora da borda esquerda")
 
-    # Top edge: because orb_cy == radius, the sphere itself begins at canvas y=0.
-    # The clamp may keep only the small safety margin, but must not reserve any
-    # extra transparent-caption height.
     orb_top = free_y + orb_cy - radius
     check(0 <= orb_top <= 8,
           "limite superior reservou espaco invisivel alem da margem fisica da esfera")
     check(free_y < height,
           "limite superior esta usando a altura inteira do canvas")
 
-    # Bottom edge proves the subtitle canvas can extend far beyond the screen
-    # while the sphere itself remains fully visible.
     _, low_y = clamp_overlay_position(0, 99999, width, height, left, top, right, bottom, 0)
     check(low_y + height > bottom,
           "barreira invisivel inferior ainda limita o canvas em vez da esfera")
