@@ -1,18 +1,13 @@
-"""Stable release entry point for the responsive cinematic interface.
-
-The shell keeps boot conservative on Windows machines: the GUI becomes usable
-first and heavy/background services stay on demand. Normal chat speech uses a
-lightweight Antonio Neural-only path, while microphone/wake mode keeps the full
-VoiceEngine. Desktop tray/hotkey remain available because they are the recovery
-path when visual voice mode hides the main chat.
-"""
+"""Stable JARVIS release shell matching the approved cinematic reference."""
 from __future__ import annotations
 
 import re
 import threading
 import time
+import tkinter as tk
 
 import customtkinter as ctk
+from PIL import ImageTk
 
 from gui_reference_exact_v3 import (
     JarvisGUI as ResponsiveJarvisGUI,
@@ -20,85 +15,137 @@ from gui_reference_exact_v3 import (
     PUBLIC_NAME,
 )
 from jarvis_antonio_tts import AntonioNeuralTTS
+from jarvis_reference_scene_139 import render_reference_scene
 from jarvis_voice_lifecycle_136 import VoiceLifecycle136Mixin
 
 
 class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
-    """Responsive UI with conservative safe boot and fast interaction paths."""
+    """Responsive UI, safe boot, fast chat and the approved 1.3.9 visual shell."""
 
     def __init__(self, *args, **kwargs):
         self._antonio_tts = None
         self._pre_action_ack_until = 0.0
         self._pre_action_ack_text = ""
+        self._jarvis_detail_mode = False
         super().__init__(*args, **kwargs)
         self._install_fast_chat_path()
 
     # ------------------------------------------------------------------
-    # Approved compact interface
+    # Approved reference interface
     # ------------------------------------------------------------------
     def _create_main_layout(self):
         super()._create_main_layout()
 
+        # Remove the old full-width application header. The reference keeps the
+        # brand in the conversation sidebar and only the updater at the top-right.
         try:
-            self.history_button.configure(text="☰", width=44)
+            old_header = self.update_button.master
+            old_header.grid_remove()
+        except Exception:
+            old_header = None
+
+        try:
+            self.side_panel.configure(
+                width=282,
+                corner_radius=0,
+                fg_color="#020b14",
+                border_width=0,
+            )
         except Exception:
             pass
+
+        # Replace the compact history heading with the large JARVIS brand from
+        # the reference. The sidebar remains a real conversation/history panel.
         try:
-            self.update_button.configure(text="↻", width=44)
-        except Exception:
-            pass
-        try:
-            header = self.update_button.master
-            for child in header.winfo_children():
-                if child is self.history_button or child is self.update_button:
-                    continue
-                try:
-                    if isinstance(child, ctk.CTkLabel) and "J A R V I S" in str(child.cget("text")):
-                        child.grid_remove()
-                except Exception:
-                    pass
-            title_slot = getattr(self.current_conversation_label, "master", None)
-            if title_slot is not None:
-                try:
-                    title_slot.grid_remove()
-                except Exception:
-                    pass
+            old_history_head = self._conversation_search_button.master
+            old_history_head.pack_forget()
         except Exception:
             pass
 
         try:
-            self._states.grid_remove()
-        except Exception:
-            pass
-        try:
-            self._wave.grid_remove()
-        except Exception:
-            pass
-        try:
-            self._hero.configure(height=310)
-        except Exception:
-            pass
-        try:
-            self._hint.configure(text="+ controles   •   F1 ajuda")
+            brand = ctk.CTkFrame(self.side_panel, fg_color="transparent", height=78)
+            brand.pack(fill="x", padx=16, pady=(14, 10), before=self._new_chat_button)
+            brand.pack_propagate(False)
+            self.history_button = self._button(brand, "◈", self._toggle_history, 48)
+            self.history_button.configure(
+                height=48,
+                corner_radius=24,
+                font=ctk.CTkFont(size=25, weight="bold"),
+                fg_color="#061a2c",
+                hover_color="#0b2a46",
+                border_color="#168ee8",
+                text_color="#6bd5ff",
+            )
+            self.history_button.pack(side="left", pady=10)
+            ctk.CTkLabel(
+                brand,
+                text="JARVIS",
+                text_color="#f5fbff",
+                font=ctk.CTkFont(family="Segoe UI", size=27, weight="bold"),
+            ).pack(side="left", padx=(12, 0), pady=12)
         except Exception:
             pass
 
+        try:
+            self._new_chat_button.configure(
+                text="＋      Nova conversa",
+                height=44,
+                anchor="w",
+                fg_color="#071726",
+                hover_color="#0c2740",
+                border_color="#1d4868",
+            )
+            self._new_chat_button.pack_configure(padx=17, pady=(0, 10))
+        except Exception:
+            pass
+
+        # Search field visually matches the reference and opens the existing real
+        # conversation-search popover when clicked or submitted.
+        try:
+            self.reference_search_entry = ctk.CTkEntry(
+                self.side_panel,
+                placeholder_text="⌕  Buscar conversas...",
+                height=40,
+                corner_radius=11,
+                fg_color="#061522",
+                border_color="#173d55",
+                text_color="#d9edf8",
+                placeholder_text_color="#7f9bad",
+            )
+            self.reference_search_entry.pack(
+                fill="x", padx=17, pady=(0, 10), after=self._new_chat_button
+            )
+            self.reference_search_entry.bind(
+                "<Button-1>",
+                lambda event=None: self.root.after(
+                    1,
+                    lambda: self._open_conversation_search_popover(self.reference_search_entry),
+                ),
+                add="+",
+            )
+            self.reference_search_entry.bind(
+                "<Return>",
+                lambda event=None: self._open_conversation_search_popover(self.reference_search_entry),
+                add="+",
+            )
+        except Exception:
+            self.reference_search_entry = None
+
+        # Diagnostics need a one-click transcript copy. Keep it in the history
+        # panel but visually secondary to the conversation list.
         try:
             self.copy_conversation_button = self._button(
-                self.side_panel,
-                "Copiar conversa",
-                self._copy_conversation,
-                width=110,
+                self.side_panel, "Copiar conversa", self._copy_conversation, width=110
             )
-            # Do not use CTkScrollableFrame as a pack(before/after) anchor.
-            # CTkScrollableFrame delegates geometry to a private parent frame;
-            # using the public wrapper as an anchor leaves stale pack metadata
-            # and crashes CustomTkinter when DPI scaling changes.
+            self.copy_conversation_button.configure(
+                height=34,
+                fg_color="#061522",
+                hover_color="#0c2740",
+                text_color="#a9c5d6",
+            )
+            anchor = self.reference_search_entry or self._new_chat_button
             self.copy_conversation_button.pack(
-                fill="x",
-                padx=12,
-                pady=(0, 8),
-                after=self._new_chat_button,
+                fill="x", padx=17, pady=(0, 8), after=anchor
             )
             self.root.bind(
                 "<Control-Shift-C>",
@@ -108,21 +155,247 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         except Exception:
             self.copy_conversation_button = None
 
-    # ------------------------------------------------------------------
-    # Conservative boot: essential lightweight recovery services only
-    # ------------------------------------------------------------------
-    def _v136_schedule_prewarm(self):
-        """Do not auto-start microphone/STT/wake during boot."""
         try:
-            self._v136_log(
-                "info",
-                "Boot seguro: microfone/STT permanecem sob demanda; TTS Antonio usa caminho leve.",
+            self.conversation_list_frame.configure(
+                fg_color="transparent", scrollbar_button_color="#123650"
             )
         except Exception:
             pass
 
+        # Bottom-left settings/help icons, as in the reference.
+        try:
+            self.status_label.pack_forget()
+        except Exception:
+            pass
+        try:
+            sidebar_tools = ctk.CTkFrame(self.side_panel, fg_color="transparent", height=58)
+            sidebar_tools.pack(side="bottom", fill="x", padx=17, pady=(8, 12))
+            self._button(sidebar_tools, "⚙", lambda: self._show_quick_actions_menu(self.history_button), 42).pack(side="left")
+            self._button(sidebar_tools, "?", self._show_functions, 42).pack(side="left", padx=(10, 0))
+        except Exception:
+            pass
+
+        # Main scene: office/city background + the existing independently rendered
+        # animated orb. Old state strips stay hidden; the caption remains real.
+        try:
+            self._states.grid_remove()
+            self._wave.grid_remove()
+            self._hint.grid_remove()
+        except Exception:
+            pass
+        try:
+            self._center.grid_rowconfigure(0, weight=5, minsize=280)
+            self._center.grid_rowconfigure(3, weight=1, minsize=74)
+            self._hero.configure(height=520, bg="#020810")
+            self._caption.configure(
+                fg_color="#04101a",
+                text_color="#ffe45f",
+                corner_radius=9,
+                height=34,
+                font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
+            )
+            chat_panel = self.chat_scroll.master
+            chat_panel.configure(fg_color="transparent", border_width=0, corner_radius=0)
+            self.chat_scroll.configure(fg_color="transparent", corner_radius=0)
+        except Exception:
+            pass
+
+        # Floating circular updater at the top-right of the scene. The inherited
+        # pulse logic now targets this real button and only pulses when an update
+        # is actually available.
+        try:
+            reference_update = self._button(self._center, "↻", self._update_now, 46)
+            reference_update.configure(
+                height=46,
+                corner_radius=23,
+                font=ctk.CTkFont(size=24),
+                fg_color="#071522",
+                hover_color="#0b2d48",
+                border_color="#1d5276",
+            )
+            reference_update.place(relx=0.965, rely=0.025, anchor="ne")
+            self.update_button = reference_update
+        except Exception:
+            pass
+
+        # Composer styled as the floating glass dock in the reference.
+        try:
+            self.input_shell.configure(
+                fg_color="#061321",
+                corner_radius=18,
+                border_width=1,
+                border_color="#244d68",
+            )
+            self.quick_menu_button.configure(
+                text="＋", width=48, height=48, corner_radius=24,
+                fg_color="#0a1d31", hover_color="#12395d",
+            )
+            self.voice_button.configure(
+                text="●", width=48, height=48, corner_radius=24,
+                fg_color="#0a2b4a", hover_color="#124c7d",
+                font=ctk.CTkFont(size=18),
+            )
+            self.send_button.configure(
+                text="➤", width=48, height=48, corner_radius=24,
+                fg_color="#09243b", hover_color="#124c7d",
+                font=ctk.CTkFont(size=19),
+            )
+        except Exception:
+            pass
+
+        self._install_reference_switches()
+        self.root.bind("<F1>", lambda event=None: self._show_functions(), add="+")
+
+    def _install_reference_switches(self):
+        try:
+            self.reference_switch_bar = ctk.CTkFrame(
+                self._center,
+                fg_color="#05111d",
+                corner_radius=14,
+                border_width=1,
+                border_color="#173b55",
+                height=46,
+            )
+            self.reference_switch_bar.grid(row=7, column=0, sticky="ew", pady=(5, 0))
+            self.reference_switch_bar.grid_columnconfigure(4, weight=1)
+
+            self._chat_tts_var = tk.BooleanVar(value=bool(getattr(self, "_chat_tts_enabled", True)))
+            self._captions_var = tk.BooleanVar(value=bool(getattr(self, "_captions_enabled", True)))
+            self._reference_fast_var = tk.BooleanVar(value=True)
+            self._reference_detail_var = tk.BooleanVar(value=False)
+
+            def make_switch(column, text, variable, command):
+                sw = ctk.CTkSwitch(
+                    self.reference_switch_bar,
+                    text=text,
+                    variable=variable,
+                    command=command,
+                    progress_color="#159cff",
+                    button_color="#dff7ff",
+                    button_hover_color="#ffffff",
+                    fg_color="#243850",
+                    text_color="#e8f5fc",
+                    font=ctk.CTkFont(size=11),
+                    height=28,
+                )
+                sw.grid(row=0, column=column, padx=(14 if column == 0 else 8, 8), pady=8, sticky="w")
+                return sw
+
+            make_switch(0, "JARVIS fala", self._chat_tts_var, self._toggle_text_speech)
+            make_switch(1, "Legenda na tela", self._captions_var, self._toggle_captions)
+            make_switch(2, "Modo Rápido", self._reference_fast_var, self._toggle_reference_fast)
+            make_switch(3, "Modo Detalhado", self._reference_detail_var, self._toggle_reference_detail)
+            ctk.CTkLabel(
+                self.reference_switch_bar,
+                text="Enter para enviar",
+                text_color="#8399aa",
+                font=ctk.CTkFont(size=10),
+            ).grid(row=0, column=4, padx=(8, 14), sticky="e")
+        except Exception:
+            self.reference_switch_bar = None
+
+    def _toggle_reference_fast(self):
+        enabled = bool(self._reference_fast_var.get())
+        if enabled:
+            self._reference_detail_var.set(False)
+            self._jarvis_detail_mode = False
+        elif not bool(self._reference_detail_var.get()):
+            self._reference_fast_var.set(True)
+        try:
+            setattr(self.core, "jarvis_detail_mode", bool(self._jarvis_detail_mode))
+        except Exception:
+            pass
+
+    def _toggle_reference_detail(self):
+        enabled = bool(self._reference_detail_var.get())
+        self._jarvis_detail_mode = enabled
+        if enabled:
+            self._reference_fast_var.set(False)
+        elif not bool(self._reference_fast_var.get()):
+            self._reference_fast_var.set(True)
+        try:
+            setattr(self.core, "jarvis_detail_mode", bool(self._jarvis_detail_mode))
+        except Exception:
+            pass
+
+    def _relayout(self):
+        """Reference composition: sidebar + dominant hero + compact transcript + dock."""
+        scale = self._center._get_widget_scaling()
+        logical_w = self.root.winfo_width() / scale
+        logical_h = self.root.winfo_height() / scale
+        wide = logical_w >= 980
+        if wide != self._wide_layout:
+            self._wide_layout = wide
+            self._drawer_open = False
+            self._place_history()
+
+        if logical_h < 430:
+            self._hero.grid_remove()
+        else:
+            self._hero.grid()
+            hero_height = max(210, min(620, logical_h * 0.58))
+            self._hero.configure(height=round(hero_height * scale))
+
+        for widget in (self._states, self._wave, self._hint):
+            try:
+                widget.grid_remove()
+            except Exception:
+                pass
+        self._center.grid_rowconfigure(0, weight=5, minsize=round(210 * scale))
+        self._center.grid_rowconfigure(3, weight=1, minsize=round(70 * scale))
+        width = max(180, self._center.winfo_width() / scale - 44)
+        self._caption.configure(wraplength=width)
+        self._refresh_caption()
+        self.agent_hud_step.configure(wraplength=max(140, width - 30))
+        self._resize_composer()
+
+    def _place_history(self):
+        self.side_panel.grid_remove()
+        self.side_panel.place_forget()
+        if self._wide_layout:
+            self.side_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 1))
+        elif self._drawer_open:
+            self.side_panel.place(x=0, y=0, relheight=1)
+            self.side_panel.lift()
+        try:
+            self.history_button.configure(text="×" if self._drawer_open else "◈")
+        except Exception:
+            pass
+
+    def _resize_scene(self):
+        w, h = self._hero.winfo_width(), self._hero.winfo_height()
+        if w < 2 or h < 2 or (w, h) == self._scene_size:
+            return
+        self._scene_size = w, h
+        self._hero_photo = ImageTk.PhotoImage(render_reference_scene(w, h), master=self.root)
+        self._hero.itemconfigure(self._scene_item, image=self._hero_photo)
+        # Raise the orb slightly so it visually floats over the pedestal.
+        self._hero.coords(self._orb_item, w / 2, h * 0.46)
+
+    def _on_hero_size(self, event):
+        self._hero.coords(self._orb_item, event.width / 2, event.height * 0.46)
+        self._hero.coords(self._render_error_item, event.width / 2, event.height / 2)
+        self._later("scene", 160, self._resize_scene)
+
+    def _visual_tick(self):
+        # Base renderer owns animation/update pulse; restore our pedestal-aligned
+        # orb coordinates after every base tick.
+        super()._visual_tick()
+        try:
+            self._hero.coords(self._orb_item, self._hero.winfo_width() / 2, self._hero.winfo_height() * 0.46)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Conservative boot: lightweight recovery services only
+    # ------------------------------------------------------------------
+    def _v136_schedule_prewarm(self):
+        try:
+            self._v136_log("info", "Boot seguro: microfone/STT sob demanda; Antonio usa caminho leve.")
+        except Exception:
+            pass
+
     def _start_deferred_runtime(self):
-        """Keep tray/hotkey alive while expensive services remain on demand."""
         starter = getattr(self, "_v123_start_worker", None)
         core_target = getattr(getattr(self, "core", None), "prewarm", None)
         desktop_target = getattr(self, "_setup_desktop_integration", None)
@@ -135,12 +408,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             else:
                 threading.Thread(target=target, name=name, daemon=True).start()
 
-        def start_desktop():
-            run_worker("JARVIS-BOOT-DESKTOP-SAFE", desktop_target)
-
-        def start_core():
-            run_worker("JARVIS-BOOT-AI-SAFE", core_target)
-
         def warm_short_tts():
             try:
                 self._get_antonio_tts().prefetch("Certo, pesquisando.")
@@ -148,26 +415,12 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
                 pass
 
         try:
-            self.root.after(180, start_desktop)
-            self.root.after(650, start_core)
+            self.root.after(180, lambda: run_worker("JARVIS-BOOT-DESKTOP-SAFE", desktop_target))
+            self.root.after(650, lambda: run_worker("JARVIS-BOOT-AI-SAFE", core_target))
             self.root.after(1800, lambda: run_worker("JARVIS-TTS-PREFETCH", warm_short_tts))
         except Exception:
-            start_desktop()
-            start_core()
-
-        try:
-            logger = getattr(self, "logger", None)
-            fn = getattr(logger, "info", None)
-            if callable(fn):
-                try:
-                    fn(
-                        "Boot seguro: bandeja/hotkey e IA leves ativos; microfone/STT, updater e modulos pesados sob demanda.",
-                        "BOOT",
-                    )
-                except TypeError:
-                    fn("Boot seguro: bandeja e IA leves ativos; servicos pesados sob demanda.")
-        except Exception:
-            pass
+            run_worker("JARVIS-BOOT-DESKTOP-SAFE", desktop_target)
+            run_worker("JARVIS-BOOT-AI-SAFE", core_target)
 
     # ------------------------------------------------------------------
     # Short standalone chat fast path
@@ -182,28 +435,20 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         if not 2 <= len(words) <= 22:
             return False
         if re.search(
-            r"\b(?:ele|ela|eles|elas|isso|isto|esse|essa|este|esta|aquele|aquela|"
-            r"tambem|também|depois|anterior|mesmo|mesma|continua|continue|explica melhor|"
-            r"como assim|e se|e quando|e onde|sobre isso|lembra|lembr[a-z]*)\b",
+            r"\b(?:ele|ela|eles|elas|isso|isto|esse|essa|este|esta|aquele|aquela|tambem|também|depois|anterior|mesmo|mesma|continua|continue|explica melhor|como assim|e se|e quando|e onde|sobre isso|lembra|lembr[a-z]*)\b",
             key,
         ):
             return False
         if re.match(r"^(?:e|mas|entao|então|ai|aí|certo|beleza|sim|nao|não)\b", key):
             return False
         if re.search(
-            r"\b(?:abre|abra|abrir|fecha|feche|fechar|minimiza|maximiza|move|mova|"
-            r"pesquisa|pesquise|pesquisar|procura|buscar|busca|clica|clique|pausa|"
-            r"continua|toque|toca|volume|arquivo|pasta|monitor|tela)\b",
+            r"\b(?:abre|abra|abrir|fecha|feche|fechar|minimiza|maximiza|move|mova|pesquisa|pesquise|pesquisar|procura|buscar|busca|clica|clique|pausa|continua|toque|toca|volume|arquivo|pasta|monitor|tela)\b",
             key,
         ):
             return False
         return bool(
             text.endswith("?")
-            or re.match(
-                r"^(?:o que|oq|qual|quais|quem|quanto|quantos|quanta|quantas|como|"
-                r"por que|porque|onde|quando|me diga|me explica|explique|define|defina)\b",
-                key,
-            )
+            or re.match(r"^(?:o que|oq|qual|quais|quem|quanto|quantos|quanta|quantas|como|por que|porque|onde|quando|me diga|me explica|explique|define|defina)\b", key)
         )
 
     def _install_fast_chat_path(self):
@@ -212,16 +457,12 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         if not callable(original) or bool(getattr(core, "_jarvis_139_fast_path", False)):
             return
 
-        def fast_stream(
-            message,
-            conversation_history,
-            memories,
-            system_commands_info="",
-            on_chunk=None,
-            speaker_name="",
-            source="text",
-        ):
-            if str(source or "text").lower() == "text" and self._fast_standalone_question(message):
+        def fast_stream(message, conversation_history, memories, system_commands_info="", on_chunk=None, speaker_name="", source="text"):
+            if (
+                str(source or "text").lower() == "text"
+                and not bool(getattr(self, "_jarvis_detail_mode", False))
+                and self._fast_standalone_question(message)
+            ):
                 conversation_history = list(conversation_history or [])[-2:]
                 memories = []
                 system_commands_info = ""
@@ -255,17 +496,14 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         return engine
 
     def _speak(self, text: str):
-        """Speak chat replies with Antonio without starting STT/microphone."""
         clean = str(text or "").strip()
         if not clean:
             return None
         if hasattr(self, "_chat_tts_enabled") and not bool(getattr(self, "_chat_tts_enabled", True)):
             return None
-
         voice_engine = getattr(self, "voice_engine", None)
         if voice_engine is not None and bool(getattr(voice_engine, "_started", False)):
             return super()._speak(clean)
-
         try:
             self._get_antonio_tts().speak(clean, interrupt=True)
             return True
@@ -289,7 +527,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             return None
 
     def _execute_v8_command_result(self, command: str):
-        """Acknowledge searches in parallel; never hold the browser action."""
         value = str(command or "")
         if value.startswith("v8:browser_search:"):
             self._pre_action_ack_text = "Certo, pesquisando."
@@ -303,66 +540,37 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         return super()._execute_v8_command_result(command)
 
     def _deliver_text_speech(self, text):
-        """Preserve turn guards and suppress duplicated post-action acknowledgements."""
         ticket = getattr(self, "_text_speech_token", None)
         self._text_speech_token = None
-        if (
-            not ticket
-            or not text
-            or bool(getattr(self, "_restoring_history", False))
-            or not bool(getattr(self, "_chat_tts_enabled", False))
-        ):
+        if not ticket or not text or bool(getattr(self, "_restoring_history", False)) or not bool(getattr(self, "_chat_tts_enabled", False)):
             return None
-
         self._speech_delivery = ticket
-        if (
-            self._speech_delivery != ticket
-            or ticket[1] != self.active_conversation_id
-            or not self._work_is_current(ticket[0])
-        ):
+        if self._speech_delivery != ticket or ticket[1] != self.active_conversation_id or not self._work_is_current(ticket[0]):
             return None
-
         spoken = self._voice_spoken_summary(text)
         if not spoken:
             self._speech_delivery = None
             return None
-
         if time.monotonic() <= float(getattr(self, "_pre_action_ack_until", 0.0) or 0.0):
             key = " ".join(str(spoken).lower().split())
-            duplicate_ack = (
-                len(key) <= 130
-                and ("pesquis" in key or "buscand" in key)
-                and any(marker in key for marker in ("certo", "ok", "abrindo", "vou ", "opera", "navegador"))
-            )
+            duplicate_ack = len(key) <= 130 and ("pesquis" in key or "buscand" in key) and any(marker in key for marker in ("certo", "ok", "abrindo", "vou ", "opera", "navegador"))
             if duplicate_ack:
                 self._speech_delivery = None
                 self._pre_action_ack_until = 0.0
                 self._pre_action_ack_text = ""
                 return None
-
         voice_engine = getattr(self, "voice_engine", None)
-        use_voice_engine = bool(
-            voice_engine is not None
-            and (
-                not hasattr(voice_engine, "_started")
-                or bool(getattr(voice_engine, "_started", False))
-            )
-        )
-
+        use_voice_engine = bool(voice_engine is not None and (not hasattr(voice_engine, "_started") or bool(getattr(voice_engine, "_started", False))))
         self._speech_delivery = None
         try:
             if use_voice_engine:
                 return voice_engine.speak(spoken, wait=False, fast=True)
             return self._get_antonio_tts().speak(spoken, interrupt=True)
-        except Exception as exc:
-            try:
-                self._v136_log("warning", f"Typed response TTS: {exc}")
-            except Exception:
-                pass
+        except Exception:
             return None
 
     # ------------------------------------------------------------------
-    # Voice overlay 1.3.9: free-moving visible orb, no transparent barrier
+    # Voice overlay 1.3.9
     # ------------------------------------------------------------------
     def _setup_qt_voice_overlay(self):
         existing = getattr(self, "qt_voice_overlay", None)
@@ -400,60 +608,52 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             return False
 
     def _qt_overlay_position(self):
-        """Anchor the visible sphere, not the transparent subtitle canvas."""
         width = 420
-        orb_cx = width // 2
-        orb_cy = 38
-        visible_radius = 42
-        margin = 18
+        orb_cx, orb_cy, visible_radius, margin = width // 2, 38, 42, 18
         left = top = 0
         try:
             if self.window_manager:
                 monitor = self.window_manager.get_active_monitor()
-                right = int(monitor["right"])
-                bottom = int(monitor["bottom"])
-                left = int(monitor.get("left", 0))
-                top = int(monitor.get("top", 0))
+                right = int(monitor["right"]); bottom = int(monitor["bottom"])
+                left = int(monitor.get("left", 0)); top = int(monitor.get("top", 0))
             else:
-                right = int(self.root.winfo_screenwidth())
-                bottom = int(self.root.winfo_screenheight())
+                right = int(self.root.winfo_screenwidth()); bottom = int(self.root.winfo_screenheight())
         except Exception:
-            right = int(self.root.winfo_screenwidth())
-            bottom = int(self.root.winfo_screenheight())
+            right = int(self.root.winfo_screenwidth()); bottom = int(self.root.winfo_screenheight())
         x = right - margin - visible_radius - orb_cx
         y = bottom - margin - visible_radius - orb_cy
         return max(left - orb_cx + visible_radius, x), max(top - orb_cy + visible_radius, y)
 
     # ------------------------------------------------------------------
-    # Chat bubbles
+    # Chat bubbles remain selectable and real.
     # ------------------------------------------------------------------
     def _create_chat_bubble(self, sender, message, is_user=False, is_jarvis=False,
                             is_system=False, timestamp=None, suppress_autoscroll=False):
         row = ctk.CTkFrame(self.chat_scroll, fg_color="transparent")
-        row.pack(fill="x", padx=6, pady=5)
+        row.pack(fill="x", padx=6, pady=4)
         bubble = ctk.CTkFrame(
             row,
-            fg_color="#10283b" if is_user else "#081a29",
-            corner_radius=12,
+            fg_color="#0a1d2c" if is_user else "#061522",
+            corner_radius=11,
             border_width=1,
-            border_color="#244d65" if is_user else "#12334b",
+            border_color="#1d5878" if is_user else "#12354a",
         )
-        bubble.pack(fill="x", padx=(32, 2) if is_user else (2, 20))
+        bubble.pack(fill="x", padx=(34, 2) if is_user else (2, 22))
         meta = ctk.CTkFrame(bubble, fg_color="transparent")
-        meta.pack(fill="x", padx=12, pady=(7, 0))
+        meta.pack(fill="x", padx=12, pady=(6, 0))
         ctk.CTkLabel(
             meta,
             text=("VOCÊ" if is_user else PUBLIC_NAME if is_jarvis else str(sender)),
-            height=20,
+            height=18,
             text_color=self.UI_ACCENT,
-            font=ctk.CTkFont(size=11, weight="bold"),
+            font=ctk.CTkFont(size=10, weight="bold"),
         ).pack(side="left")
         ctk.CTkLabel(
             meta,
             text=self._format_message_time(timestamp),
-            height=20,
+            height=18,
             text_color=self.UI_MUTED,
-            font=ctk.CTkFont(size=10),
+            font=ctk.CTkFont(size=9),
         ).pack(side="right")
         text = MessageText(
             bubble,
@@ -461,9 +661,9 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             fg_color="transparent",
             border_width=0,
             text_color="#adbecb" if is_system else self.UI_TEXT,
-            font=ctk.CTkFont(family="Segoe UI", size=15),
+            font=ctk.CTkFont(family="Segoe UI", size=14),
         )
-        text.pack(fill="x", expand=True, padx=8, pady=(0, 6))
+        text.pack(fill="x", expand=True, padx=8, pady=(0, 5))
         self._bind_chat_mousewheel_tree(row)
         text.bind("<Control-c>", lambda event=None: self._copy_text_selection(text))
         if not suppress_autoscroll and not self._restoring_history:
