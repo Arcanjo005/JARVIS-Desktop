@@ -140,26 +140,28 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         self.root.bind("<F1>", lambda event=None: self._show_functions(), add="+")
 
     def _position_reference_update(self):
-        """Pin updater inside the real Tk root bounds on every CTk DPI scale."""
+        """Pin updater in physical Tk pixels, bypassing CTk place scaling."""
         button = getattr(self, "update_button", None)
         if button is None:
             return
         try:
-            scale = float(button._get_widget_scaling() or 1.0)
-        except Exception:
-            scale = 1.0
-        try:
-            # CTk's place() scales x/y and the widget dimensions by the same
-            # widget scaling. winfo_width() is already physical. Therefore the
-            # physical target must be divided by scale exactly once.
             root_w_px = max(1, int(self.root.winfo_width()))
             button_w_px = max(1, int(button.winfo_width()))
             if button_w_px <= 1:
+                try:
+                    scale = float(button._get_widget_scaling() or 1.0)
+                except Exception:
+                    scale = 1.0
                 button_w_px = max(1, round(46 * scale))
-            margin_px = max(6, round(12 * scale))
-            top_px = max(6, round(12 * scale))
+            margin_px = 12
+            top_px = 12
             left_px = max(0, root_w_px - margin_px - button_w_px)
-            button.place(x=left_px / max(0.01, scale), y=top_px / max(0.01, scale), anchor="nw")
+            button.tk.call(
+                "place", "configure", button._w,
+                "-x", int(left_px),
+                "-y", int(top_px),
+                "-anchor", "nw",
+            )
             button.lift()
         except Exception:
             pass
