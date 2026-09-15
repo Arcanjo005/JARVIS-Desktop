@@ -227,21 +227,46 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         except Exception: pass
 
     def _relayout(self):
-        scale = self._center._get_widget_scaling(); logical_w = self.root.winfo_width() / scale; logical_h = self.root.winfo_height() / scale
+        scale = self._center._get_widget_scaling()
+        logical_w = self.root.winfo_width() / scale
+        logical_h = self.root.winfo_height() / scale
         wide = logical_w >= 980
         if wide != self._wide_layout:
-            self._wide_layout = wide; self._drawer_open = False; self._place_history()
-        self._layout_reference_switches(logical_w); self._position_reference_update()
-        if logical_h < 430: self._hero.grid_remove()
+            self._wide_layout = wide
+            self._drawer_open = False
+            self._place_history()
+        self._layout_reference_switches(logical_w)
+        self._position_reference_update()
+
+        # The hero is decorative; composer, transcript and switches are not.
+        # Under compact/HiDPI windows the previous 58% hero target consumed more
+        # vertical space than Tk actually had, pushing the composer below root.
+        hide_hero = logical_h < 560
+        if hide_hero:
+            self._hero.grid_remove()
+            self._center.grid_rowconfigure(0, weight=0, minsize=0)
         else:
-            self._hero.grid(); hero_height = max(210, min(620, logical_h * 0.58)); self._hero.configure(height=round(hero_height * scale))
+            self._hero.grid()
+            reserve_logical = 300 if logical_w < 850 else 270
+            hero_height = max(150, min(560, (logical_h - reserve_logical) * 0.72))
+            hero_px = max(1, round(hero_height * scale))
+            self._hero.configure(height=hero_px)
+            self._center.grid_rowconfigure(0, weight=0, minsize=hero_px)
+
         for widget in (self._states, self._wave, self._hint):
-            try: widget.grid_remove()
-            except Exception: pass
-        self._center.grid_rowconfigure(0, weight=0 if logical_h < 430 else 5, minsize=round((58 if logical_h < 430 else 210) * scale))
-        self._center.grid_rowconfigure(3, weight=1, minsize=round(110 * scale))
+            try:
+                widget.grid_remove()
+            except Exception:
+                pass
+
+        chat_min = 70 if logical_h < 700 else 90
+        self._center.grid_rowconfigure(3, weight=1, minsize=round(chat_min * scale))
         width = max(180, self._center.winfo_width() / scale - 44)
-        self._caption.configure(wraplength=width); self._refresh_caption(); self.agent_hud_step.configure(wraplength=max(140, width - 30)); self._resize_composer(); self._position_reference_update()
+        self._caption.configure(wraplength=width)
+        self._refresh_caption()
+        self.agent_hud_step.configure(wraplength=max(140, width - 30))
+        self._resize_composer()
+        self._position_reference_update()
 
     def _place_history(self):
         self.side_panel.grid_remove(); self.side_panel.place_forget()
