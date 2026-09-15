@@ -1,8 +1,9 @@
 """Stable release entry point for the responsive cinematic interface.
 
-The shell adds a single lifecycle owner around the proven responsive UI while
-keeping a narrow compatibility fix for CTk/Tk callbacks that may invoke bound
-handlers without an event object during teardown/tests.
+The shell keeps boot conservative on Windows machines: the GUI becomes usable
+first and heavy/background services stay on demand. This avoids the burst of
+AI/learning/advanced/app-index/updater/voice work that can starve Tk and make
+Windows report JARVIS as Not Responding.
 """
 import customtkinter as ctk
 
@@ -15,7 +16,60 @@ from jarvis_voice_lifecycle_136 import VoiceLifecycle136Mixin
 
 
 class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
-    """Responsive UI plus the safe voice/overlay lifecycle."""
+    """Responsive UI with conservative safe-boot lifecycle."""
+
+    def _v136_schedule_prewarm(self):
+        """Do not auto-start microphone/voice during boot.
+
+        Voice still initializes on the first explicit voice/TTS request. Keeping
+        it lazy prevents Vosk/audio driver work from overlapping the GUI and
+        other Windows services on lower-core systems.
+        """
+        try:
+            self._v136_log("info", "Boot seguro: voz permanece sob demanda.")
+        except Exception:
+            pass
+
+    def _start_deferred_runtime(self):
+        """Safe boot: prewarm only the conversational core automatically.
+
+        The legacy release layer scheduled learning, advanced Windows modules,
+        desktop integration, app-index rebuild and updater within the first nine
+        seconds. Together with voice this could saturate a 4-core CPU and leave
+        Tk without message-pump time. Those subsystems remain available through
+        their normal on-demand paths; automatic app-index rebuild is deliberately
+        skipped because it is maintenance, not a boot requirement.
+        """
+        starter = getattr(self, "_v123_start_worker", None)
+        target = getattr(getattr(self, "core", None), "prewarm", None)
+
+        def start_core():
+            if not callable(target):
+                return
+            if callable(starter):
+                starter("JARVIS-BOOT-AI-SAFE", target)
+            else:
+                import threading
+                threading.Thread(target=target, name="JARVIS-BOOT-AI-SAFE", daemon=True).start()
+
+        try:
+            self.root.after(1200, start_core)
+        except Exception:
+            start_core()
+
+        try:
+            logger = getattr(self, "logger", None)
+            fn = getattr(logger, "info", None)
+            if callable(fn):
+                try:
+                    fn(
+                        "Boot seguro ativo: indice de apps, voz, updater e modulos pesados ficam sob demanda.",
+                        "BOOT",
+                    )
+                except TypeError:
+                    fn("Boot seguro ativo; servicos pesados ficam sob demanda.")
+        except Exception:
+            pass
 
     def _create_chat_bubble(self, sender, message, is_user=False, is_jarvis=False,
                             is_system=False, timestamp=None, suppress_autoscroll=False):
@@ -55,8 +109,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         )
         text.pack(fill="x", expand=True, padx=8, pady=(0, 6))
         self._bind_chat_mousewheel_tree(row)
-        # CTk/Tk can invoke this command without an event object in synthetic
-        # dispatch/teardown paths. Keep Ctrl+C behavior but make event optional.
         text.bind("<Control-c>", lambda event=None: self._copy_text_selection(text))
         if not suppress_autoscroll and not self._restoring_history:
             self._schedule_chat_scroll(force=is_user, delay=100)
