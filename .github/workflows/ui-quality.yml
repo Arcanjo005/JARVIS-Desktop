@@ -3,7 +3,7 @@ name: JARVIS UI Quality
 on:
   workflow_dispatch:
   push:
-    branches: [main, ui/responsive-quality]
+    branches: [main, ui/responsive-quality, fix/voice-lifecycle-136]
     paths:
       - "**.py"
       - "requirements.txt"
@@ -36,18 +36,18 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force validation | Out-Null
-          git archive --format=zip HEAD -o validation/validated-source.zip -- gui_reference_exact_v3.py gui_conversation_shell.py jarvis_ui_render.py jarvis_display.py jarvis_quick_controls.py jarvis_ui_selftest.py tools/ui_preflight.py tools/renderer_smoke.py tools/display_smoke.py .github/workflows
+          git archive --format=zip HEAD -o validation/validated-source.zip -- gui_reference_exact_v3.py gui_conversation_shell.py jarvis_voice_lifecycle_136.py jarvis_voice_lifecycle_selftest.py jarvis_ui_render.py jarvis_display.py jarvis_quick_controls.py jarvis_ui_selftest.py tools/ui_preflight.py tools/renderer_smoke.py tools/display_smoke.py .github/workflows
           if ($LASTEXITCODE -ne 0) { throw "Source archive failed" }
       - name: Preflight and legacy regression gates
         shell: pwsh
         run: |
           python tools/restore_large_assets.py
           if ($LASTEXITCODE -ne 0) { throw "Asset integrity failed" }
-          python tools/prepare_release.py --version 1.3.5 --repository "${{ github.repository }}" --run-number "${{ github.run_number }}"
+          python tools/prepare_release.py --version 1.3.6 --repository "${{ github.repository }}" --run-number "${{ github.run_number }}"
           if ($LASTEXITCODE -ne 0) { throw "Release preparation failed" }
-          python tools/ui_preflight.py --version 1.3.5
+          python tools/ui_preflight.py --version 1.3.6
           if ($LASTEXITCODE -ne 0) { throw "Preflight failed" }
-          foreach ($test in @("jarvis_hot_update_selftest.py", "jarvis_desktop_selftest.py", "jarvis_build16_selftest.py", "jarvis_v8_selftest.py")) {
+          foreach ($test in @("jarvis_hot_update_selftest.py", "jarvis_desktop_selftest.py", "jarvis_build16_selftest.py", "jarvis_v8_selftest.py", "jarvis_voice_lifecycle_selftest.py")) {
             python $test
             if ($LASTEXITCODE -ne 0) { throw "$test failed" }
           }
