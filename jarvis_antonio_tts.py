@@ -120,6 +120,27 @@ class AntonioNeuralTTS:
             self._queue.put_nowait((generation, clean))
         return True
 
+    def prefetch(self, text: str) -> bool:
+        """Warm Antonio MP3 cache without initializing playback or microphone.
+
+        Intended for tiny deterministic acknowledgements such as
+        "Certo, pesquisando.". Call from a background worker; synthesis may use
+        the network the first time, but no audio device or GUI path is touched.
+        """
+        clean = " ".join(str(text or "").split()).strip()
+        if not clean:
+            return False
+        try:
+            chunks = self._split_text(clean)
+            if not chunks:
+                return False
+            for chunk in chunks:
+                self._synthesize(chunk)
+            return True
+        except Exception as exc:
+            self._log("debug", f"Prefetch Antonio ignorado: {exc}")
+            return False
+
     @staticmethod
     def _split_text(text: str):
         """Return short chunks so the first audio starts quickly."""
