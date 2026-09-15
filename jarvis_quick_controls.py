@@ -57,39 +57,48 @@ class QuickControlsPanel(ctk.CTkToplevel):
         slider = ctk.CTkSlider(box, from_=20, to=100, number_of_steps=4,
                                command=owner._apply_autonomy_percent_ui)
         slider.pack(fill="x", padx=14, pady=(2, 12)); slider.set(autonomy)
-        box, owner._quick_panel_presence_value = section("PRESEN\u00c7A", f"{presence}%")
+        box, owner._quick_panel_presence_value = section("PRESENCA", f"{presence}%")
         slider = ctk.CTkSlider(box, from_=20, to=100, number_of_steps=4,
                                command=owner._apply_presence_percent_ui)
         slider.pack(fill="x", padx=14, pady=(2, 12)); slider.set(presence)
         box, owner._quick_panel_voice_value = section("VELOCIDADE DA VOZ", rate)
         choices(box, [(label, lambda value=value, name=label: owner._apply_voice_rate_ui(value, name))
-                      for label, value in (("Devagar", "+4%"), ("Normal", "+10%"), ("R\u00e1pida", "+14%"))], audio=True)
+                      for label, value in (("Devagar", "+4%"), ("Normal", "+10%"), ("Rapida", "+14%"))], audio=True)
         box, owner._quick_panel_mic_value = section("MICROFONE", f"{mic:.2f}x")
         choices(box, [(label, lambda value=value, name=label: owner._apply_mic_sensitivity_ui(value, name))
-                      for label, value in (("Padr\u00e3o", 1.0), ("Sens\u00edvel", 1.18), ("Muito", 1.28))], audio=True)
+                      for label, value in (("Padrao", 1.0), ("Sensivel", 1.18), ("Muito", 1.28))], audio=True)
         box, _ = section("FERRAMENTAS")
         entries = (("Contexto atual", owner._show_operational_context), ("Rotinas", owner._show_workflows),
                    ("Esfera flutuante", lambda: owner._show_orb_style_menu(anchor)),
-                   ("Mem\u00f3rias", owner._open_memory_manager), ("Paleta", owner._open_command_palette),
-                   ("Diagn\u00f3stico", owner._open_diagnostic_panel), ("Logs", owner._toggle_monitor))
+                   ("Memorias", owner._open_memory_manager), ("Paleta", owner._open_command_palette),
+                   ("Diagnostico", owner._open_diagnostic_panel), ("Logs", owner._toggle_monitor))
         for label, callback in entries:
             button = owner._button(box, label, lambda cb=callback: owner._quick_action(cb))
             button.pack(fill="x", padx=10, pady=3)
             self.buttons[label] = button
-        ctk.CTkLabel(body, text="A\u00e7\u00f5es de alto impacto continuam exigindo autoriza\u00e7\u00e3o.",
+        ctk.CTkLabel(body, text="Acoes de alto impacto continuam exigindo autorizacao.",
                      text_color=owner.UI_MUTED, wraplength=370).pack(fill="x", padx=12, pady=12)
         self._refresh_availability()
         self.after_idle(self.focus_force)
 
+    def _voice_ready(self):
+        checker = getattr(self.owner, "_v136_engine_ready", None)
+        if callable(checker):
+            try:
+                return bool(checker())
+            except Exception:
+                return False
+        return self.owner.voice_engine is not None
+
     def _refresh_availability(self):
         self._availability_job = None
-        ready = self.owner.voice_engine is not None
+        ready = self._voice_ready()
         if ready != self._last_ready:
             self._last_ready = ready
             for button in self.audio_buttons:
                 button.configure(state="normal" if ready else "disabled")
-            self.feedback.configure(text="Voz dispon\u00edvel. Ajuste os controles abaixo." if ready else
-                                     "Voz ainda n\u00e3o dispon\u00edvel; ajustes de \u00e1udio ficam desativados.")
+            self.feedback.configure(text="Voz disponivel. Ajuste os controles abaixo." if ready else
+                                     "Voz ainda nao disponivel; ajustes de audio ficam desativados.")
         self._availability_job = self.after(500, self._refresh_availability)
 
     def destroy(self):
