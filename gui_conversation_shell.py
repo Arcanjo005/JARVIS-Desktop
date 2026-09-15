@@ -36,8 +36,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
     def _create_main_layout(self):
         super()._create_main_layout()
 
-        # Remove the old full-width application header. The reference keeps the
-        # brand in the conversation sidebar and only the updater at the top-right.
         try:
             old_header = self.update_button.master
             old_header.grid_remove()
@@ -54,8 +52,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         except Exception:
             pass
 
-        # Replace the compact history heading with the large JARVIS brand from
-        # the reference. The sidebar remains a real conversation/history panel.
         try:
             old_history_head = self._conversation_search_button.master
             old_history_head.pack_forget()
@@ -99,8 +95,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         except Exception:
             pass
 
-        # Search field visually matches the reference and opens the existing real
-        # conversation-search popover when clicked or submitted.
         try:
             self.reference_search_entry = ctk.CTkEntry(
                 self.side_panel,
@@ -131,8 +125,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         except Exception:
             self.reference_search_entry = None
 
-        # Diagnostics need a one-click transcript copy. Keep it in the history
-        # panel but visually secondary to the conversation list.
         try:
             self.copy_conversation_button = self._button(
                 self.side_panel, "Copiar conversa", self._copy_conversation, width=110
@@ -162,7 +154,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         except Exception:
             pass
 
-        # Bottom-left settings/help icons, as in the reference.
         try:
             self.status_label.pack_forget()
         except Exception:
@@ -175,8 +166,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         except Exception:
             pass
 
-        # Main scene: office/city background + the existing independently rendered
-        # animated orb. Old state strips stay hidden; the caption remains real.
         try:
             self._states.grid_remove()
             self._wave.grid_remove()
@@ -200,9 +189,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         except Exception:
             pass
 
-        # Floating circular updater at the top-right of the scene. The inherited
-        # pulse logic now targets this real button and only pulses when an update
-        # is actually available.
         try:
             reference_update = self._button(self._center, "↻", self._update_now, 46)
             reference_update.configure(
@@ -218,7 +204,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         except Exception:
             pass
 
-        # Composer styled as the floating glass dock in the reference.
         try:
             self.input_shell.configure(
                 fg_color="#061321",
@@ -261,15 +246,14 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
                 height=46,
             )
             self.reference_switch_bar.grid(row=7, column=0, sticky="ew", pady=(5, 0))
-            self.reference_switch_bar.grid_columnconfigure(4, weight=1)
 
             self._chat_tts_var = tk.BooleanVar(value=bool(getattr(self, "_chat_tts_enabled", True)))
             self._captions_var = tk.BooleanVar(value=bool(getattr(self, "_captions_enabled", True)))
             self._reference_fast_var = tk.BooleanVar(value=True)
             self._reference_detail_var = tk.BooleanVar(value=False)
 
-            def make_switch(column, text, variable, command):
-                sw = ctk.CTkSwitch(
+            def make_switch(text, variable, command):
+                return ctk.CTkSwitch(
                     self.reference_switch_bar,
                     text=text,
                     variable=variable,
@@ -282,21 +266,91 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
                     font=ctk.CTkFont(size=11),
                     height=28,
                 )
-                sw.grid(row=0, column=column, padx=(14 if column == 0 else 8, 8), pady=8, sticky="w")
-                return sw
 
-            make_switch(0, "JARVIS fala", self._chat_tts_var, self._toggle_text_speech)
-            make_switch(1, "Legenda na tela", self._captions_var, self._toggle_captions)
-            make_switch(2, "Modo Rápido", self._reference_fast_var, self._toggle_reference_fast)
-            make_switch(3, "Modo Detalhado", self._reference_detail_var, self._toggle_reference_detail)
-            ctk.CTkLabel(
+            self._reference_speech_switch = make_switch(
+                "JARVIS fala", self._chat_tts_var, self._toggle_text_speech
+            )
+            self._reference_caption_switch = make_switch(
+                "Legenda na tela", self._captions_var, self._toggle_captions
+            )
+            self._reference_fast_switch = make_switch(
+                "Modo Rápido", self._reference_fast_var, self._toggle_reference_fast
+            )
+            self._reference_detail_switch = make_switch(
+                "Modo Detalhado", self._reference_detail_var, self._toggle_reference_detail
+            )
+            self._reference_enter_label = ctk.CTkLabel(
                 self.reference_switch_bar,
                 text="Enter para enviar",
                 text_color="#8399aa",
                 font=ctk.CTkFont(size=10),
-            ).grid(row=0, column=4, padx=(8, 14), sticky="e")
+            )
+            self._layout_reference_switches(1200)
         except Exception:
             self.reference_switch_bar = None
+
+    def _layout_reference_switches(self, logical_w):
+        """Keep the reference dock exact on normal screens and fluid on narrow/HiDPI."""
+        bar = getattr(self, "reference_switch_bar", None)
+        switches = (
+            getattr(self, "_reference_speech_switch", None),
+            getattr(self, "_reference_caption_switch", None),
+            getattr(self, "_reference_fast_switch", None),
+            getattr(self, "_reference_detail_switch", None),
+        )
+        if bar is None or any(sw is None for sw in switches):
+            return
+        for sw in switches:
+            try:
+                sw.grid_forget()
+            except Exception:
+                pass
+        label = getattr(self, "_reference_enter_label", None)
+        if label is not None:
+            try:
+                label.grid_forget()
+            except Exception:
+                pass
+        for column in range(5):
+            try:
+                bar.grid_columnconfigure(column, weight=0, minsize=0)
+            except Exception:
+                pass
+
+        if logical_w >= 850:
+            bar.configure(height=46)
+            for idx, sw in enumerate(switches):
+                sw.configure(font=ctk.CTkFont(size=11))
+                sw.grid(
+                    row=0,
+                    column=idx,
+                    padx=(14 if idx == 0 else 8, 8),
+                    pady=8,
+                    sticky="w",
+                )
+            bar.grid_columnconfigure(4, weight=1)
+            if label is not None:
+                label.grid(row=0, column=4, padx=(8, 14), sticky="e")
+            return
+
+        # Narrow screens: same four real controls, two columns instead of one
+        # over-wide row. This prevents the switch bar from increasing the
+        # requested width of the entire center pane and pushing composer/update
+        # controls beyond the physical window.
+        bar.configure(height=78)
+        bar.grid_columnconfigure(0, weight=1)
+        bar.grid_columnconfigure(1, weight=1)
+        compact_font = ctk.CTkFont(size=10 if logical_w < 560 else 11)
+        positions = ((0, 0), (0, 1), (1, 0), (1, 1))
+        for sw, (row, column) in zip(switches, positions):
+            sw.configure(font=compact_font)
+            sw.grid(
+                row=row,
+                column=column,
+                padx=(10, 6),
+                pady=(5, 3),
+                sticky="w",
+            )
 
     def _toggle_reference_fast(self):
         enabled = bool(self._reference_fast_var.get())
@@ -333,6 +387,8 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             self._drawer_open = False
             self._place_history()
 
+        self._layout_reference_switches(logical_w)
+
         if logical_h < 430:
             self._hero.grid_remove()
         else:
@@ -347,7 +403,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
                 pass
         self._center.grid_rowconfigure(0, weight=0 if logical_h < 430 else 5,
                                        minsize=round((58 if logical_h < 430 else 210) * scale))
-        # Include the transcript frame's padding in its minimum height.
         self._center.grid_rowconfigure(3, weight=1, minsize=round(110 * scale))
         width = max(180, self._center.winfo_width() / scale - 44)
         self._caption.configure(wraplength=width)
@@ -382,7 +437,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         self._scene_size = w, h
         self._hero_photo = ImageTk.PhotoImage(render_reference_scene(w, h), master=self.root)
         self._hero.itemconfigure(self._scene_item, image=self._hero_photo)
-        # Keep the animated orb centered in the hero, above the scene pedestal.
         self._hero.coords(self._orb_item, w / 2, h / 2)
 
     def _on_hero_size(self, event):
@@ -391,8 +445,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         self._later("scene", 160, self._resize_scene)
 
     def _visual_tick(self):
-        # Base renderer owns animation/update pulse; retain the same canvas
-        # center after every tick, including delayed frames after a resize.
         super()._visual_tick()
         try:
             self._hero.coords(self._orb_item, self._hero.winfo_width() / 2, self._hero.winfo_height() / 2)
