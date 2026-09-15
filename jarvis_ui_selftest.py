@@ -230,7 +230,7 @@ class InterfaceTests(unittest.TestCase):
             a.root.geometry(f"{width}x{height}");settle_layout(a)
             for widget in (a.quick_menu_button,a.text_input,a.send_button,a.voice_button,a.update_button,a.history_button): self.assert_inside(widget)
             self.assertGreater(a.text_input.winfo_width(),180);ox,oy=a._hero.coords(a._orb_item);self.assertAlmostEqual(ox,a._hero.winfo_width()/2,delta=1);self.assertAlmostEqual(oy,a._hero.winfo_height()/2,delta=1);self.assertGreater(a.chat_scroll._parent_canvas.winfo_height(),60)
-        self.assertEqual(a.side_panel.winfo_width(),242)
+        self.assertEqual(a.side_panel.winfo_width(),282)
 
     def test_hidpi_and_4k_composition(self):
         a=self.app

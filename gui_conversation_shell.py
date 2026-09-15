@@ -244,6 +244,10 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             pass
 
         self._install_reference_switches()
+        self._sidebar_history_button = self.history_button
+        self._compact_history_button = self._button(self._center, "◈", self._toggle_history, 48)
+        self._compact_history_button.configure(height=48, corner_radius=24)
+        self._place_history()
         self.root.bind("<F1>", lambda event=None: self._show_functions(), add="+")
 
     def _install_reference_switches(self):
@@ -341,8 +345,10 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
                 widget.grid_remove()
             except Exception:
                 pass
-        self._center.grid_rowconfigure(0, weight=5, minsize=round(210 * scale))
-        self._center.grid_rowconfigure(3, weight=1, minsize=round(70 * scale))
+        self._center.grid_rowconfigure(0, weight=0 if logical_h < 430 else 5,
+                                       minsize=round((58 if logical_h < 430 else 210) * scale))
+        # Include the transcript frame's padding in its minimum height.
+        self._center.grid_rowconfigure(3, weight=1, minsize=round(110 * scale))
         width = max(180, self._center.winfo_width() / scale - 44)
         self._caption.configure(wraplength=width)
         self._refresh_caption()
@@ -352,6 +358,13 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
     def _place_history(self):
         self.side_panel.grid_remove()
         self.side_panel.place_forget()
+        if hasattr(self, "_compact_history_button"):
+            if self._wide_layout or self._drawer_open:
+                self._compact_history_button.place_forget()
+                self.history_button = self._sidebar_history_button
+            else:
+                self._compact_history_button.place(relx=0.025, rely=0.025, anchor="nw")
+                self.history_button = self._compact_history_button
         if self._wide_layout:
             self.side_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 1))
         elif self._drawer_open:
@@ -369,20 +382,20 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         self._scene_size = w, h
         self._hero_photo = ImageTk.PhotoImage(render_reference_scene(w, h), master=self.root)
         self._hero.itemconfigure(self._scene_item, image=self._hero_photo)
-        # Raise the orb slightly so it visually floats over the pedestal.
-        self._hero.coords(self._orb_item, w / 2, h * 0.46)
+        # Keep the animated orb centered in the hero, above the scene pedestal.
+        self._hero.coords(self._orb_item, w / 2, h / 2)
 
     def _on_hero_size(self, event):
-        self._hero.coords(self._orb_item, event.width / 2, event.height * 0.46)
+        self._hero.coords(self._orb_item, event.width / 2, event.height / 2)
         self._hero.coords(self._render_error_item, event.width / 2, event.height / 2)
         self._later("scene", 160, self._resize_scene)
 
     def _visual_tick(self):
-        # Base renderer owns animation/update pulse; restore our pedestal-aligned
-        # orb coordinates after every base tick.
+        # Base renderer owns animation/update pulse; retain the same canvas
+        # center after every tick, including delayed frames after a resize.
         super()._visual_tick()
         try:
-            self._hero.coords(self._orb_item, self._hero.winfo_width() / 2, self._hero.winfo_height() * 0.46)
+            self._hero.coords(self._orb_item, self._hero.winfo_width() / 2, self._hero.winfo_height() / 2)
         except Exception:
             pass
 
