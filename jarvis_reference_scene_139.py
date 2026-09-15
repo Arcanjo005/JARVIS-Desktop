@@ -12,33 +12,70 @@ from PIL import Image, ImageDraw, ImageFilter
 def _install_ctk_root_place_guard():
     """Keep root-level CTk place widgets inside the real Tk client area.
 
-    CustomTkinter 5.2.2 replays cached logical ``place`` arguments whenever DPI
-    scaling changes.  The 1.3.9 updater is intentionally a root overlay, so that
-    replay can move it outside the physical client width on Windows.  Re-anchor
-    only root-level placed CTk buttons after CTk has applied its own scaling.
+    CustomTkinter 5.2.2 can replay cached logical ``place`` arguments after DPI
+    or window-size changes. The 1.3.9 updater is a root overlay, so clamp it only
+    after CTk/Tk have finished each geometry pass.
     """
     try:
         import customtkinter as ctk
         button_cls = ctk.CTkButton
         if getattr(button_cls, "_jarvis_root_place_guard", False):
             return
-        original = button_cls._set_scaling
 
-        def guarded_set_scaling(self, *args, **kwargs):
-            result = original(self, *args, **kwargs)
+        original_init = button_cls.__init__
+        original_set_scaling = button_cls._set_scaling
+
+        def clamp_root_button(button):
             try:
-                master = self.master
-                if isinstance(master, ctk.CTk) and self.winfo_manager() == "place":
-                    master.update_idletasks()
-                    root_w = max(1, int(master.winfo_width()))
-                    widget_w = max(1, int(self.winfo_width()))
-                    left = max(0, root_w - 12 - widget_w)
-                    self.tk.call("place", "configure", self._w,
-                                 "-x", left, "-y", 12, "-anchor", "nw")
+                master = button.master
+                if not isinstance(master, ctk.CTk):
+                    return
+                if button.winfo_manager() != "place":
+                    return
+                master.update_idletasks()
+                root_w = max(1, int(master.winfo_width()))
+                root_h = max(1, int(master.winfo_height()))
+                widget_w = max(1, int(button.winfo_width()))
+                widget_h = max(1, int(button.winfo_height()))
+                left = max(0, root_w - 12 - widget_w)
+                top = max(0, min(12, root_h - widget_h))
+                button.tk.call(
+                    "place", "configure", button._w,
+                    "-x", left,
+                    "-y", top,
+                    "-anchor", "nw",
+                )
             except Exception:
                 pass
+
+        def schedule_clamp(button):
+            try:
+                button.after_idle(lambda b=button: clamp_root_button(b))
+                button.after(25, lambda b=button: clamp_root_button(b))
+                button.after(90, lambda b=button: clamp_root_button(b))
+            except Exception:
+                pass
+
+        def guarded_init(self, *args, **kwargs):
+            original_init(self, *args, **kwargs)
+            try:
+                master = self.master
+                if isinstance(master, ctk.CTk):
+                    master.bind(
+                        "<Configure>",
+                        lambda event=None, b=self: schedule_clamp(b),
+                        add="+",
+                    )
+                    schedule_clamp(self)
+            except Exception:
+                pass
+
+        def guarded_set_scaling(self, *args, **kwargs):
+            result = original_set_scaling(self, *args, **kwargs)
+            schedule_clamp(self)
             return result
 
+        button_cls.__init__ = guarded_init
         button_cls._set_scaling = guarded_set_scaling
         button_cls._jarvis_root_place_guard = True
     except Exception:
