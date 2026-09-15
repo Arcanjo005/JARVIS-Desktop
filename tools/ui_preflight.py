@@ -35,8 +35,15 @@ def main():
     import gui_conversation_shell
     import gui_reference_exact_v3
     import gui
-    check(gui_conversation_shell.JarvisGUI is gui_reference_exact_v3.JarvisGUI,"Stable shell export")
-    check(gui_reference_exact_v3.JarvisGUI.__bases__==(gui.JarvisGUI,),"Single controller inheritance")
+    from jarvis_voice_lifecycle_136 import VoiceLifecycle136Mixin
+    check(issubclass(gui_conversation_shell.JarvisGUI, gui_reference_exact_v3.JarvisGUI),
+          "Stable shell preserves responsive UI inheritance")
+    check(gui_reference_exact_v3.JarvisGUI.__bases__==(gui.JarvisGUI,),
+          "Responsive UI keeps single controller inheritance")
+    check(gui_conversation_shell.JarvisGUI.__bases__==(VoiceLifecycle136Mixin, gui_reference_exact_v3.JarvisGUI),
+          "Stable shell composes exactly one voice lifecycle owner")
+    check(gui_conversation_shell.JarvisGUI.mro().count(VoiceLifecycle136Mixin)==1,
+          "Voice lifecycle mixin is unique in shell MRO")
     from jarvis_ui_render import OrbRenderer
     image=OrbRenderer().render(100,.5)
     check(image.size==(100,100) and image.mode=="RGBA","Procedural 3D renderer imports and renders")
