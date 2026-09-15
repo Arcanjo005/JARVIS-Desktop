@@ -167,9 +167,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             pass
 
         try:
-            # Root-anchored on purpose: _center can temporarily report a wider
-            # requested size during CTk scaling changes. Tying the updater to the
-            # root guarantees it never leaves the physical app window.
             reference_update = self._button(self.root, "↻", self._update_now, 46)
             reference_update.configure(
                 height=46,
@@ -179,9 +176,9 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
                 hover_color="#0b2d48",
                 border_color="#1d5276",
             )
-            reference_update.place(relx=0.985, rely=0.025, anchor="ne")
-            reference_update.lift()
             self.update_button = reference_update
+            self._position_reference_update()
+            self.root.after_idle(self._position_reference_update)
         except Exception:
             pass
 
@@ -210,6 +207,28 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         self._compact_history_button.configure(height=48, corner_radius=24)
         self._place_history()
         self.root.bind("<F1>", lambda event=None: self._show_functions(), add="+")
+
+    def _position_reference_update(self):
+        """Pin updater to physical root bounds regardless of CTk DPI scaling."""
+        button = getattr(self, "update_button", None)
+        if button is None:
+            return
+        try:
+            scale = float(button._get_widget_scaling() or 1.0)
+        except Exception:
+            scale = 1.0
+        try:
+            root_w = max(1, int(self.root.winfo_width()))
+            margin_px = 12
+            top_px = 12
+            # CTk scales absolute place coordinates by widget_scaling. Convert
+            # physical root pixels back to logical coordinates before place().
+            logical_x = max(1.0, (root_w - margin_px) / max(0.01, scale))
+            logical_y = max(1.0, top_px / max(0.01, scale))
+            button.place(x=logical_x, y=logical_y, anchor="ne")
+            button.lift()
+        except Exception:
+            pass
 
     def _install_reference_switches(self):
         try:
@@ -338,6 +357,7 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             self._place_history()
 
         self._layout_reference_switches(logical_w)
+        self._position_reference_update()
 
         if logical_h < 430:
             self._hero.grid_remove()
@@ -359,10 +379,7 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         self._refresh_caption()
         self.agent_hud_step.configure(wraplength=max(140, width - 30))
         self._resize_composer()
-        try:
-            self.update_button.lift()
-        except Exception:
-            pass
+        self._position_reference_update()
 
     def _place_history(self):
         self.side_panel.grid_remove()
@@ -402,7 +419,7 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         super()._visual_tick()
         try:
             self._hero.coords(self._orb_item, self._hero.winfo_width() / 2, self._hero.winfo_height() / 2)
-            self.update_button.lift()
+            self._position_reference_update()
         except Exception:
             pass
 
