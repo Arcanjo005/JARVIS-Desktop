@@ -39,9 +39,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
     def _create_main_layout(self):
         super()._create_main_layout()
 
-        # Keep only compact utility controls in the top bar. The left history
-        # panel remains the history surface; the header no longer repeats a large
-        # JARVIS wordmark or a wide textual update control.
         try:
             self.history_button.configure(text="☰", width=44)
         except Exception:
@@ -69,9 +66,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         except Exception:
             pass
 
-        # The approved composition is orb + yellow caption + conversation +
-        # translucent composer. The old permanent state strip/wave only added
-        # visual noise and duplicated the orb state.
         try:
             self._states.grid_remove()
         except Exception:
@@ -89,9 +83,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         except Exception:
             pass
 
-        # The base controller already implements _copy_conversation() and keeps
-        # the complete active chat in chat_history. Expose it directly in the
-        # history panel so diagnostics can be sent together with the transcript.
         try:
             self.copy_conversation_button = self._button(
                 self.side_panel,
@@ -99,11 +90,15 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
                 self._copy_conversation,
                 width=110,
             )
+            # Do not use CTkScrollableFrame as a pack(before/after) anchor.
+            # CTkScrollableFrame delegates geometry to a private parent frame;
+            # using the public wrapper as an anchor leaves stale pack metadata
+            # and crashes CustomTkinter when DPI scaling changes.
             self.copy_conversation_button.pack(
                 fill="x",
                 padx=12,
                 pady=(0, 8),
-                before=self.conversation_list_frame,
+                after=self._new_chat_button,
             )
             self.root.bind(
                 "<Control-Shift-C>",
@@ -153,8 +148,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
                 pass
 
         try:
-            # Tray/hotkey are intentionally early: if visual voice withdraws the
-            # chat, "Abrir JARVIS" must already exist in the Windows tray.
             self.root.after(180, start_desktop)
             self.root.after(650, start_core)
             self.root.after(1800, lambda: run_worker("JARVIS-TTS-PREFETCH", warm_short_tts))
@@ -188,7 +181,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         words = re.findall(r"[\wÀ-ÿ]+", key)
         if not 2 <= len(words) <= 22:
             return False
-        # Follow-ups must retain normal context.
         if re.search(
             r"\b(?:ele|ela|eles|elas|isso|isto|esse|essa|este|esta|aquele|aquela|"
             r"tambem|também|depois|anterior|mesmo|mesma|continua|continue|explica melhor|"
@@ -198,7 +190,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             return False
         if re.match(r"^(?:e|mas|entao|então|ai|aí|certo|beleza|sim|nao|não)\b", key):
             return False
-        # Local actions stay entirely on the deterministic router.
         if re.search(
             r"\b(?:abre|abra|abrir|fecha|feche|fechar|minimiza|maximiza|move|mova|"
             r"pesquisa|pesquise|pesquisar|procura|buscar|busca|clica|clique|pausa|"
@@ -231,9 +222,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             source="text",
         ):
             if str(source or "text").lower() == "text" and self._fast_standalone_question(message):
-                # Generic standalone questions do not need twelve previous turns,
-                # memory retrieval or live Windows metadata. The same Flash-Lite
-                # model and minimal thinking level remain in use.
                 conversation_history = list(conversation_history or [])[-2:]
                 memories = []
                 system_commands_info = ""
@@ -312,8 +300,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
                 name="JARVIS-ACTION-ACK",
                 daemon=True,
             ).start()
-        # The deterministic search executes immediately on this same call; TTS
-        # runs independently and can never add network/audio latency to it.
         return super()._execute_v8_command_result(command)
 
     def _deliver_text_speech(self, text):
