@@ -6,7 +6,7 @@ on:
       version:
         description: "Versão do JARVIS"
         required: true
-        default: "1.3.5"
+        default: "1.3.8"
   push:
     branches:
       - main
@@ -18,7 +18,7 @@ permissions:
 
 concurrency:
   group: jarvis-full-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -87,8 +87,6 @@ jobs:
             -Repository "${{ github.repository }}" `
             -RunNumber "${{ github.run_number }}"
 
-      # Compatibilidade com o guard legado em jarvis_desktop_selftest.py:
-      # JARVIS_Setup_${{ inputs.version }}.exe
       - name: Salvar instalador
         uses: actions/upload-artifact@v4
         with:
