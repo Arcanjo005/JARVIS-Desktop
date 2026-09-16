@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication
 
-from gui_qt_reference import JarvisGUI
+from gui_qt_reference_v2 import JarvisGUI
 
 
 class Logger:
@@ -55,13 +55,19 @@ def main():
         window = JarvisGUI(Logger(), object(), Core())
         window.resize(1280, 780)
         window.show()
-        wait(120)
+        wait(140)
 
-        check(window.sidebar.width() == 292, "sidebar Qt perdeu largura de referencia")
-        check(window.transcript_frame.isVisible(), "chat Qt nao esta visivel")
-        check(window.composer.isVisible(), "composer Qt nao esta visivel")
+        check(window.sidebar.width() == 286, "sidebar Qt perdeu largura de referencia")
+        check(window.topbar.isVisible(), "topbar Qt ausente")
+        check(window.update_button.isVisible(), "botao de atualizacao Qt ausente")
         check(window.scene.isVisible(), "cena Qt nao esta visivel")
+        check(window.transcript_frame.isVisible(), "chat Qt nao esta visivel")
+        check(window.transcript_frame.height() <= 245, "chat Qt voltou a dominar a tela")
+        check(window.composer.isVisible(), "composer Qt nao esta visivel")
+        check(window.composer.height() == 68, "composer Qt perdeu altura fixa")
         check(window.history is not None, "historico Qt ausente")
+        check(window.mode_checks["JARVIS fala"].isChecked(), "fala nao inicia habilitada")
+        check(window.mode_checks["Legenda na tela"].isChecked(), "legenda nao inicia habilitada")
 
         window.composer.submitted.emit("teste funcional")
         deadline = time.monotonic() + 2.0
@@ -82,6 +88,7 @@ def main():
         app.processEvents()
         check(window.bridge.active_conversation_id != old_id, "nova conversa Qt nao mudou sessao")
         check(window.transcript_frame.isVisible(), "nova conversa ocultou o chat Qt")
+        check(window.composer.isVisible(), "nova conversa ocultou o composer Qt")
 
         window.close()
         app.processEvents()
