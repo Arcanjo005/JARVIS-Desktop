@@ -12,17 +12,55 @@ class JarvisGUI(ReferenceJarvisGUI):
     """Approved reference UI using the natural continuous speech engine."""
 
     def _create_main_layout(self):
-        """Build the approved shell and keep the real transcript host reachable.
-
-        The final-reference layer applies cosmetic CTk options after the base
-        layout exists.  Some CustomTkinter versions reject one of those cosmetic
-        options and the defensive block used to clear ``_reference_chat_panel``
-        even though the real chat host had already been created.  Release code
-        must never let a styling error disable chat visibility transitions.
-        """
+        """Build the approved shell and guarantee a visible real chat surface."""
         super()._create_main_layout()
-        if getattr(self, "_reference_chat_panel", None) is None:
-            self._reference_chat_panel = getattr(getattr(self, "chat_scroll", None), "master", None)
+        self._reference_chat_panel = getattr(getattr(self, "chat_scroll", None), "master", None)
+        self._reference_chat_visible = True
+        panel = self._reference_chat_panel
+        if panel is not None:
+            try:
+                panel.grid(row=3, column=0, sticky="nsew", pady=(5, 5))
+                panel.lift()
+            except Exception:
+                pass
+        try:
+            self._center.grid_rowconfigure(3, weight=1, minsize=140)
+        except Exception:
+            pass
+
+    def _set_reference_chat_visible(self, visible: bool):
+        """The production build never hides the transcript/chat container.
+
+        Older reference-shell logic collapsed the chat on an empty/new
+        conversation.  That made the released app look like chat was missing and
+        could also leave the composer below the visible area.  Keep the actual
+        chat widget mounted at all times; an empty conversation is represented by
+        an empty transcript, not by removing the surface.
+        """
+        self._reference_chat_visible = True
+        panel = getattr(self, "_reference_chat_panel", None)
+        if panel is None:
+            panel = getattr(getattr(self, "chat_scroll", None), "master", None)
+            self._reference_chat_panel = panel
+        if panel is not None:
+            try:
+                panel.grid(row=3, column=0, sticky="nsew", pady=(5, 5))
+                panel.lift()
+            except Exception:
+                pass
+        try:
+            self._center.grid_rowconfigure(3, weight=1, minsize=140)
+            self._later("reference-layout", 10, self._relayout)
+        except Exception:
+            pass
+
+    def _sync_reference_chat_mode(self):
+        self._set_reference_chat_visible(True)
+
+    def _new_conversation(self):
+        result = super()._new_conversation()
+        self._set_reference_chat_visible(True)
+        return result
 
     def _reference_asset_candidates(self):
         """Prefer the staged copy that build_windows already bundles as data/."""
