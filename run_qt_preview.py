@@ -8,7 +8,7 @@ import multiprocessing
 def main() -> int:
     from actions import SystemActions
     from core import JarvisCore
-    from gui_qt_reference import JarvisGUI
+    from gui_qt_reference_v2 import JarvisGUI
     from logger import JarvisLogger
 
     logger = JarvisLogger()
