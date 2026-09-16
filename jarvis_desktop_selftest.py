@@ -120,7 +120,11 @@ check('.env' not in "\n".join(line for line in iss.splitlines() if line.strip().
 check("windows-latest" in workflow, "workflow não usa Windows")
 check("actions/checkout@v7" in workflow and "actions/setup-python@v7" in workflow, "actions desatualizadas")
 check("gh release" in workflow, "workflow não publica release")
-check("JARVIS_Setup_${{ inputs.version }}.exe" in workflow, "asset do setup ausente")
+check(
+    "JARVIS_Setup_${{ env.RELEASE_VERSION }}.exe" in workflow
+    or "JARVIS_Setup_$env:RELEASE_VERSION.exe" in workflow,
+    "asset do setup ausente",
+)
 
 # Runtime distribution guards: packaged helper processes may never relaunch
 # the full JARVIS UI recursively.
