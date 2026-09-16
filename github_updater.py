@@ -1,12 +1,8 @@
-"""GitHub Releases updater for JARVIS Desktop.
+"""GitHub updater with stable/beta/dev channels for JARVIS Desktop.
 
-Two update paths are supported:
-1. hot update (preferred): a small source-only ZIP is validated and activated
-   under the current Windows user's LocalAppData; no PyInstaller build/UAC is
-   needed and the bundled runtime stays untouched;
-2. full installer: used when the embedded Python/runtime/dependencies change.
-
-Public repositories do not require a GitHub token for update checks/downloads.
+Stable keeps using normal public releases. Beta/dev use a small signed-by-hash
+manifest so a newer build can be offered even when the semantic version is the
+same. The selected channel is stored per user under LocalAppData.
 """
 from __future__ import annotations
 
@@ -28,6 +24,7 @@ from secure_settings import settings_dir
 
 GITHUB_API_VERSION = "2026-03-10"
 DEFAULT_TIMEOUT = 10.0
+VALID_CHANNELS = {"stable", "beta", "dev"}
 
 
 @dataclass(frozen=True)
@@ -40,9 +37,12 @@ class UpdateInfo:
     size: int
     notes: str
     html_url: str
-    kind: str = "installer"  # "hot" or "installer"
+    kind: str = "installer"
     runtime_api: int = 0
     minimum_bootstrap: str = ""
+    build_id: str = ""
+    channel: str = "stable"
+    repair: bool = False
 
     @property
     def asset_name(self) -> str:
@@ -54,11 +54,20 @@ class UpdateInfo:
 
 
 class GitHubReleaseUpdater:
-    def __init__(self, app_dir=None, current_version="0.0.0", logger=None):
+    def __init__(
+        self,
+        app_dir=None,
+        current_version="0.0.0",
+        logger=None,
+        current_build="",
+        channel="stable",
+    ):
         self.app_dir = Path(app_dir or self._detect_app_dir()).resolve()
         self.current_version = str(current_version or "0.0.0").strip()
+        self.current_build = str(current_build or "").strip()
         self.logger = logger
         self.config = self._load_config()
+        self._channel = self._load_channel(channel)
 
     @staticmethod
     def _detect_app_dir() -> Path:
@@ -83,7 +92,8 @@ class GitHubReleaseUpdater:
         path = self.app_dir / "update_config.json"
         try:
             if path.exists():
-                return json.loads(path.read_text(encoding="utf-8")) or {}
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                return payload if isinstance(payload, dict) else {}
         except Exception:
             pass
         return {}
@@ -103,6 +113,45 @@ class GitHubReleaseUpdater:
     def bootstrap_version(self) -> str:
         return str(self.config.get("bootstrap_version") or self.current_version or "0.0.0").strip()
 
+    @property
+    def channel(self) -> str:
+        return self._channel
+
+    @property
+    def channel_path(self) -> Path:
+        return settings_dir() / "update_channel.json"
+
+    def _load_channel(self, fallback: str) -> str:
+        value = str(fallback or self.config.get("default_channel") or "stable").strip().lower()
+        try:
+            path = settings_dir() / "update_channel.json"
+            if path.is_file():
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                saved = str((payload or {}).get("channel") or "").strip().lower()
+                if saved in VALID_CHANNELS:
+                    value = saved
+        except Exception:
+            pass
+        return value if value in VALID_CHANNELS else "stable"
+
+    def set_channel(self, channel: str) -> str:
+        value = str(channel or "").strip().lower()
+        if value not in VALID_CHANNELS:
+            raise ValueError(f"Canal de atualização inválido: {channel}")
+        path = self.channel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"channel": value}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        self._channel = value
+        self._log("info", f"Canal de atualização alterado para {value}.")
+        return value
+
+    def _channel_config(self, channel: str | None = None) -> dict:
+        channels = self.config.get("channels") or {}
+        if not isinstance(channels, dict):
+            return {}
+        payload = channels.get(str(channel or self.channel).lower()) or {}
+        return payload if isinstance(payload, dict) else {}
+
     def is_configured(self) -> bool:
         repo = self.repository
         return bool(
@@ -116,7 +165,7 @@ class GitHubReleaseUpdater:
         return {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": GITHUB_API_VERSION,
-            "User-Agent": f"JARVIS-Desktop/{self.current_version}",
+            "User-Agent": f"JARVIS-Desktop/{self.current_version}-{self.current_build or 'unknown'}",
         }
 
     @staticmethod
@@ -132,6 +181,23 @@ class GitHubReleaseUpdater:
         except InvalidVersion:
             return False
 
+    def _should_offer(self, candidate_version: str, candidate_build: str, force_repair: bool) -> tuple[bool, bool]:
+        try:
+            candidate = Version(self._normalize_tag(candidate_version))
+            current = Version(self._normalize_tag(self.current_version))
+        except InvalidVersion:
+            return False, False
+        if candidate > current:
+            return True, False
+        if candidate < current:
+            return False, False
+        candidate_build = str(candidate_build or "").strip()
+        if candidate_build and candidate_build != self.current_build:
+            return True, False
+        if force_repair:
+            return True, True
+        return False, False
+
     @staticmethod
     def _digest_from_asset(asset: dict) -> str:
         digest = str(asset.get("digest") or "").strip().lower()
@@ -145,12 +211,7 @@ class GitHubReleaseUpdater:
         url = str(asset.get("browser_download_url") or "")
         if not url:
             return ""
-        response = requests.get(
-            url,
-            headers={"User-Agent": self._headers()["User-Agent"]},
-            timeout=DEFAULT_TIMEOUT,
-            allow_redirects=True,
-        )
+        response = requests.get(url, headers={"User-Agent": self._headers()["User-Agent"]}, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
         response.raise_for_status()
         raw = response.content
         if len(raw) > max_bytes:
@@ -190,11 +251,7 @@ class GitHubReleaseUpdater:
             return None
         assets = list(release.get("assets") or [])
         prefix = str(self.config.get("hot_update_asset_prefix") or "JARVIS_HotUpdate_")
-        candidates = [
-            asset for asset in assets
-            if str(asset.get("name") or "").startswith(prefix)
-            and str(asset.get("name") or "").lower().endswith(".zip")
-        ]
+        candidates = [asset for asset in assets if str(asset.get("name") or "").startswith(prefix) and str(asset.get("name") or "").lower().endswith(".zip")]
         if not candidates:
             return None
         hot = max(candidates, key=lambda item: int(item.get("size") or 0))
@@ -204,65 +261,85 @@ class GitHubReleaseUpdater:
             metadata_version = str(metadata.get("version") or "").strip()
             runtime_api = int(metadata.get("runtime_api") or 0)
             minimum_bootstrap = str(metadata.get("minimum_bootstrap") or "").strip()
-            if metadata_version != version:
+            if metadata_version != version or runtime_api <= 0 or runtime_api != self.runtime_api:
                 return None
-            if runtime_api <= 0 or runtime_api != self.runtime_api:
+            if minimum_bootstrap and Version(self.bootstrap_version) < Version(minimum_bootstrap):
                 return None
-            if minimum_bootstrap:
-                if Version(self.bootstrap_version) < Version(minimum_bootstrap):
-                    return None
         except (InvalidVersion, ValueError, TypeError):
             return None
         sha256 = self._asset_sha(assets, hot)
         if not sha256:
-            self._log("warning", "Hot update ignorado porque o SHA-256 não está disponível.")
             return None
-        return UpdateInfo(
-            version=version,
-            tag=str(release.get("tag_name") or ""),
-            installer_name=hot_name,
-            download_url=str(hot.get("browser_download_url") or ""),
-            sha256=sha256,
-            size=int(hot.get("size") or 0),
-            notes=str(release.get("body") or "").strip(),
-            html_url=str(release.get("html_url") or "").strip(),
-            kind="hot",
-            runtime_api=runtime_api,
-            minimum_bootstrap=minimum_bootstrap,
-        )
+        return UpdateInfo(version=version, tag=str(release.get("tag_name") or ""), installer_name=hot_name, download_url=str(hot.get("browser_download_url") or ""), sha256=sha256, size=int(hot.get("size") or 0), notes=str(release.get("body") or "").strip(), html_url=str(release.get("html_url") or "").strip(), kind="hot", runtime_api=runtime_api, minimum_bootstrap=minimum_bootstrap, channel="stable")
 
     def _installer_candidate(self, release: dict, version: str) -> Optional[UpdateInfo]:
         assets = list(release.get("assets") or [])
         prefix = str(self.config.get("installer_asset_prefix") or "JARVIS_Setup_")
-        candidates = [
-            asset for asset in assets
-            if str(asset.get("name") or "").lower().endswith(".exe")
-            and str(asset.get("name") or "").startswith(prefix)
-        ]
+        candidates = [asset for asset in assets if str(asset.get("name") or "").lower().endswith(".exe") and str(asset.get("name") or "").startswith(prefix)]
         if not candidates:
             return None
         installer = max(candidates, key=lambda item: int(item.get("size") or 0))
         installer_name = str(installer.get("name") or "")
         sha256 = self._asset_sha(assets, installer)
         if not sha256:
-            self._log("warning", "Instalador novo ignorado porque o SHA-256 não está disponível.")
+            return None
+        return UpdateInfo(version=version, tag=str(release.get("tag_name") or ""), installer_name=installer_name, download_url=str(installer.get("browser_download_url") or ""), sha256=sha256, size=int(installer.get("size") or 0), notes=str(release.get("body") or "").strip(), html_url=str(release.get("html_url") or "").strip(), kind="installer", channel="stable")
+
+    def _check_manifest(self, *, force_repair: bool = False) -> Optional[UpdateInfo]:
+        cfg = self._channel_config()
+        url = str(cfg.get("manifest_url") or "").strip()
+        if not url:
+            return None
+        response = requests.get(url, headers={"User-Agent": self._headers()["User-Agent"]}, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
+        response.raise_for_status()
+        if len(response.content) > 128 * 1024:
+            raise ValueError("Manifesto de atualização grande demais.")
+        payload = response.json()
+        if not isinstance(payload, dict) or payload.get("available") is False:
+            return None
+        channel = str(payload.get("channel") or "").strip().lower()
+        if channel != self.channel:
+            raise ValueError(f"Manifesto do canal {channel or '?'} recebido no canal {self.channel}.")
+        version = str(payload.get("version") or "").strip()
+        build_id = str(payload.get("build_id") or "").strip()
+        sha256 = str(payload.get("sha256") or "").strip().lower()
+        download_url = str(payload.get("download_url") or "").strip()
+        installer_name = str(payload.get("installer_name") or "").strip()
+        if not version or not build_id or not installer_name or not download_url:
+            raise ValueError("Manifesto de atualização incompleto.")
+        if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+            raise ValueError("Manifesto sem SHA-256 válido.")
+        if not download_url.lower().startswith("https://"):
+            raise ValueError("URL de atualização não segura.")
+        offer, repair = self._should_offer(version, build_id, force_repair)
+        if not offer:
             return None
         return UpdateInfo(
             version=version,
-            tag=str(release.get("tag_name") or ""),
+            build_id=build_id,
+            channel=channel,
+            tag=str(payload.get("tag") or ""),
             installer_name=installer_name,
-            download_url=str(installer.get("browser_download_url") or ""),
+            download_url=download_url,
             sha256=sha256,
-            size=int(installer.get("size") or 0),
-            notes=str(release.get("body") or "").strip(),
-            html_url=str(release.get("html_url") or "").strip(),
-            kind="installer",
+            size=int(payload.get("size") or 0),
+            notes=str(payload.get("notes") or "").strip(),
+            html_url=str(payload.get("html_url") or "").strip(),
+            repair=repair,
         )
 
-    def check(self) -> Optional[UpdateInfo]:
-        """Return the newest compatible release, preferring a hot package."""
+    def check(self, force_repair: bool = False) -> Optional[UpdateInfo]:
+        """Return an update for the selected channel.
+
+        Dev/beta compare semantic version plus build_id, therefore 1.4.0 build
+        105 can update 1.4.0 build 104. Manual checks may request a repair when
+        both version and build already match.
+        """
         if not self.is_configured():
             return None
+        if self.channel in {"beta", "dev"}:
+            return self._check_manifest(force_repair=force_repair)
+
         url = f"https://api.github.com/repos/{self.repository}/releases?per_page=20"
         response = requests.get(url, headers=self._headers(), timeout=DEFAULT_TIMEOUT)
         response.raise_for_status()
@@ -273,19 +350,23 @@ class GitHubReleaseUpdater:
             if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
                 continue
             version = self._normalize_tag(str(release.get("tag_name") or ""))
-            if not self._is_newer(version):
-                continue
             try:
-                ranked.append((Version(version), release, version))
+                parsed = Version(version)
+                current = Version(self._normalize_tag(self.current_version))
             except InvalidVersion:
                 continue
+            if parsed < current or (parsed == current and not force_repair):
+                continue
+            ranked.append((parsed, release, version, parsed == current))
         ranked.sort(key=lambda item: item[0], reverse=True)
-        for _, release, version in ranked:
-            hot = self._hot_candidate(release, version)
+        for _, release, version, same_version in ranked:
+            hot = None if same_version else self._hot_candidate(release, version)
             if hot is not None:
                 return hot
             installer = self._installer_candidate(release, version)
             if installer is not None:
+                if same_version:
+                    return UpdateInfo(**{**installer.__dict__, "repair": True})
                 return installer
         return None
 
@@ -298,13 +379,7 @@ class GitHubReleaseUpdater:
         hasher = hashlib.sha256()
         downloaded = 0
         try:
-            with requests.get(
-                info.download_url,
-                headers={"User-Agent": self._headers()["User-Agent"]},
-                timeout=(10, 90),
-                stream=True,
-                allow_redirects=True,
-            ) as response:
+            with requests.get(info.download_url, headers={"User-Agent": self._headers()["User-Agent"]}, timeout=(10, 120), stream=True, allow_redirects=True) as response:
                 response.raise_for_status()
                 total = int(response.headers.get("Content-Length") or info.size or 0)
                 with open(temp_name, "wb") as handle:
@@ -338,12 +413,6 @@ class GitHubReleaseUpdater:
         return True
 
     def launch_hot_restart(self) -> bool:
-        """Spawn a helper copy that waits for this PID, then boots new runtime.
-
-        PyInstaller 6.9+ treats a same-executable child as a worker by default.
-        A restart must explicitly request a fresh bootloader environment or the
-        child can inherit stale process state instead of becoming a new app.
-        """
         env = dict(os.environ)
         if getattr(sys, "frozen", False):
             command = [sys.executable, "--restart-after-pid", str(os.getpid())]
@@ -353,15 +422,11 @@ class GitHubReleaseUpdater:
         creationflags = 0
         if os.name == "nt":
             creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
-        subprocess.Popen(
-            command, cwd=str(self.app_dir), close_fds=True,
-            creationflags=creationflags, env=env,
-        )
+        subprocess.Popen(command, cwd=str(self.app_dir), close_fds=True, creationflags=creationflags, env=env)
         return True
 
     @staticmethod
     def _temporarily_reset_windows_dll_directory():
-        """Return a restore callback after making external-child DLL lookup sane."""
         if os.name != "nt" or not getattr(sys, "frozen", False):
             return lambda: None
         try:
@@ -369,7 +434,6 @@ class GitHubReleaseUpdater:
             kernel32 = ctypes.windll.kernel32
             bundled = str(getattr(sys, "_MEIPASS", "") or "")
             kernel32.SetDllDirectoryW(None)
-
             def restore():
                 try:
                     kernel32.SetDllDirectoryW(bundled if bundled else None)
@@ -383,15 +447,7 @@ class GitHubReleaseUpdater:
         installer = Path(installer).resolve()
         if not installer.exists():
             raise FileNotFoundError(str(installer))
-        args = [
-            str(installer),
-            "/VERYSILENT",
-            "/SUPPRESSMSGBOXES",
-            "/NORESTART",
-            "/CLOSEAPPLICATIONS",
-            "/FORCECLOSEAPPLICATIONS",
-            f"/DIR={self.app_dir}",
-        ]
+        args = [str(installer), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/FORCECLOSEAPPLICATIONS", f"/DIR={self.app_dir}"]
         if update:
             args.append("/UPDATE=1")
         creationflags = 0
@@ -405,4 +461,4 @@ class GitHubReleaseUpdater:
         return True
 
 
-__all__ = ["GitHubReleaseUpdater", "UpdateInfo"]
+__all__ = ["GitHubReleaseUpdater", "UpdateInfo", "VALID_CHANNELS"]
