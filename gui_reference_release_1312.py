@@ -11,6 +11,19 @@ from jarvis_natural_tts_1312 import NaturalSpeechTTS1312
 class JarvisGUI(ReferenceJarvisGUI):
     """Approved reference UI using the natural continuous speech engine."""
 
+    def _create_main_layout(self):
+        """Build the approved shell and keep the real transcript host reachable.
+
+        The final-reference layer applies cosmetic CTk options after the base
+        layout exists.  Some CustomTkinter versions reject one of those cosmetic
+        options and the defensive block used to clear ``_reference_chat_panel``
+        even though the real chat host had already been created.  Release code
+        must never let a styling error disable chat visibility transitions.
+        """
+        super()._create_main_layout()
+        if getattr(self, "_reference_chat_panel", None) is None:
+            self._reference_chat_panel = getattr(getattr(self, "chat_scroll", None), "master", None)
+
     def _reference_asset_candidates(self):
         """Prefer the staged copy that build_windows already bundles as data/."""
         roots = []
