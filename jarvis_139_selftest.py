@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused non-interactive regression checks for JARVIS Desktop 1.3.9."""
+"""Focused non-interactive regression checks for JARVIS Desktop 1.3.9+ shell."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,17 +22,16 @@ def main():
 
     check("_setup_desktop_integration" in shell and "JARVIS-BOOT-DESKTOP-SAFE" in shell,
           "bandeja/hotkey nao sao restaurados no boot seguro")
-    check("Copiar conversa" in shell and "_copy_conversation" in shell,
-          "botao de copiar conversa nao esta exposto")
+    check("Copiar diagnóstico" in shell and "_copy_full_diagnostic" in shell and "DIAGNÓSTICO COMPLETO" in shell,
+          "botao de diagnostico completo nao esta exposto")
+    check("CONVERSA COMPLETA" in shell and "LINHA DO TEMPO DA SESSÃO" in shell and "LOGS RECENTES" in shell,
+          "diagnostico nao inclui conversa, eventos e logs")
     check("Nova conversa" in shell and "Buscar conversas" in shell and "JARVIS" in shell,
           "barra lateral deixou de representar conversas como na referencia")
     check("JARVIS fala" in shell and "Legenda na tela" in shell and "Modo Rápido" in shell and "Modo Detalhado" in shell,
           "dock inferior nao contem os controles da referencia")
 
     # Validate the actual scene contract instead of comments/variable names.
-    # The previous check looked for the literal words "pedestal" and "waveform",
-    # which made harmless source cleanup fail the release even when the renderer
-    # remained connected and functional.
     check("from jarvis_reference_scene_139 import render_reference_scene" in shell,
           "shell nao importa o renderer cinematografico de referencia")
     check("render_reference_scene(" in shell and "def render_reference_scene(" in scene,
@@ -45,8 +44,16 @@ def main():
     compact_shell = "".join(shell.split())
     check("_fast_standalone_question" in shell and "conversation_history=list(conversation_historyor[])[-2:]" in compact_shell,
           "fast path de perguntas simples ausente")
+    check("_remote_retry=False" in compact_shell and "_remote_retry=_remote_retry" in compact_shell,
+          "wrapper rapido nao preserva retry interno do Core")
     check("v8:browser_search:" in shell and "Certo, pesquisando." in shell,
           "ack imediato de pesquisa ausente")
+    check("_resolve_browser_context" in shell and "youtube.com/results?search_query=" in shell and "v8_remember_topic" in shell,
+          "resolucao contextual de pesquisa/YouTube ausente")
+    check("_ensure_window_manager" in shell and "window_manager_load_error" in shell,
+          "controle de janelas nao possui carregamento sob demanda no shell")
+    check("_local_social_reply" in shell and "datetime.now().hour" in shell,
+          "saudacao local nao usa horario real")
     check("jarvis_voice_overlay_139" in shell,
           "shell nao usa overlay 1.3.9")
     check("JARVIS_OVERLAY_139" in overlay and "env=child_env" in overlay,
@@ -55,6 +62,8 @@ def main():
           "bootstrap do filho nao redireciona overlay 1.3.9")
     check("def prefetch(" in antonio and "self._synthesize(chunk)" in antonio,
           "prefetch Antonio nao esta implementado")
+    check("on_chunk" in antonio and "_prefetch_next" in antonio and "JARVIS-ANTONIO-PREFETCH" in antonio,
+          "fala Antonio nao possui legenda por trecho e look-ahead")
     check("from voice_overlay_qt import _run_child" in main_src,
           "bootstrap principal foi alterado desnecessariamente")
 
