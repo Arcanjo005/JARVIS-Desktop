@@ -7,5 +7,15 @@
   "hot_updates_enabled": true,
   "hot_update_asset_prefix": "JARVIS_HotUpdate_",
   "runtime_api": 1,
-  "bootstrap_version": "1.2.8"
+  "bootstrap_version": "1.2.8",
+  "default_channel": "stable",
+  "channels": {
+    "stable": {},
+    "beta": {
+      "manifest_url": "https://raw.githubusercontent.com/Arcanjo005/JARVIS-Desktop/ui/qt-reference-rebuild/updates/beta.json"
+    },
+    "dev": {
+      "manifest_url": "https://raw.githubusercontent.com/Arcanjo005/JARVIS-Desktop/ui/qt-reference-rebuild/updates/dev.json"
+    }
+  }
 }
