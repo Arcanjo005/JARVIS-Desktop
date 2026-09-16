@@ -38,20 +38,25 @@ def write_version_resource(version: str):
 
 
 def activate_conversation_shell():
-    """Use the conversation-first shell in release builds without rewriting gui.py."""
-    shell = ROOT / "gui_conversation_shell.py"
-    if not shell.is_file():
-        raise RuntimeError("gui_conversation_shell.py ausente")
+    """Use the final reference-first shell in release builds."""
+    final_shell = ROOT / "gui_reference_final_1311.py"
+    if not final_shell.is_file():
+        raise RuntimeError("gui_reference_final_1311.py ausente")
 
     main_path = ROOT / "main.py"
     text = main_path.read_text(encoding="utf-8")
-    old = "from gui import JarvisGUI"
-    new = "from gui_conversation_shell import JarvisGUI"
+    candidates = (
+        "from gui import JarvisGUI",
+        "from gui_conversation_shell import JarvisGUI",
+    )
+    new = "from gui_reference_final_1311 import JarvisGUI"
     if new in text:
         return
-    if old not in text:
-        raise RuntimeError("Import de JarvisGUI não encontrado em main.py")
-    main_path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    for old in candidates:
+        if old in text:
+            main_path.write_text(text.replace(old, new, 1), encoding="utf-8")
+            return
+    raise RuntimeError("Import de JarvisGUI não encontrado em main.py")
 
 
 def main():
