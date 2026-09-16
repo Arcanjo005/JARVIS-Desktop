@@ -36,7 +36,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force validation | Out-Null
-          git archive --format=zip HEAD -o validation/validated-source.zip -- gui_reference_exact_v3.py gui_conversation_shell.py gui_reference_final_1312.py gui_reference_release_1312.py jarvis_reference_asset.py jarvis_natural_tts_1312.py assets jarvis_reference_scene_139.py jarvis_voice_overlay_139.py voice_overlay_qt.py jarvis_antonio_tts.py hot_update_runtime.py jarvis_139_selftest.py jarvis_reference_final_selftest.py jarvis_voice_lifecycle_136.py jarvis_voice_lifecycle_selftest.py jarvis_ui_render.py jarvis_display.py jarvis_quick_controls.py jarvis_ui_selftest.py tools/ui_preflight.py tools/renderer_smoke.py tools/display_smoke.py .github/workflows
+          git archive --format=zip HEAD -o validation/validated-source.zip -- gui_reference_exact_v3.py gui_conversation_shell.py gui_reference_final_1312.py gui_reference_release_1312.py jarvis_reference_asset.py jarvis_natural_tts_1312.py assets jarvis_reference_scene_139.py jarvis_voice_overlay_139.py voice_overlay_qt.py jarvis_antonio_tts.py hot_update_runtime.py jarvis_139_selftest.py jarvis_reference_final_selftest.py jarvis_reference_ui_smoke.py jarvis_voice_lifecycle_136.py jarvis_voice_lifecycle_selftest.py jarvis_ui_render.py jarvis_display.py jarvis_quick_controls.py jarvis_ui_selftest.py tools/ui_preflight.py tools/renderer_smoke.py tools/display_smoke.py .github/workflows
           if ($LASTEXITCODE -ne 0) { throw "Source archive failed" }
       - name: Preflight and legacy regression gates
         shell: pwsh
@@ -56,6 +56,11 @@ jobs:
         run: |
           python jarvis_ui_selftest.py
           if ($LASTEXITCODE -ne 0) { throw "UI behavior tests failed" }
+      - name: Exercise approved reference shell
+        shell: pwsh
+        run: |
+          python jarvis_reference_ui_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw "Reference 1.3.12 UI smoke failed" }
       - name: Verify native monitor fitting
         shell: pwsh
         run: |
