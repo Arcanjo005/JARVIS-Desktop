@@ -67,28 +67,31 @@ def main():
             check(app._reference_scene_source is not None, "scene 1440p real nao foi carregada")
             check(tuple(app._reference_scene_source.size) == (2560, 1440), "scene carregada com dimensao incorreta")
             check(app._reference_chat_panel is not None, "painel real do chat nao existe")
+            check(app._reference_chat_panel.winfo_viewable(), "chat de producao nao esta visivel ao abrir")
 
-            # A home cinematic may collapse an empty transcript, but the actual
-            # widget must still exist and become visible as soon as chat starts.
+            # Production 1.3.12 intentionally keeps the real transcript surface
+            # mounted at all times. Even a request to collapse it must not hide
+            # chat, otherwise new/empty conversations can look broken.
             app._set_reference_chat_visible(False)
             pump(app, 0.12)
-            check(not app._reference_chat_panel.winfo_viewable(), "home vazio nao recolheu transcript")
+            check(app._reference_chat_panel.winfo_viewable(), "chat foi ocultado por transicao de home")
+
             app.add_message("Voce", "TESTE-CHAT-VISIVEL", is_user=True)
             pump(app, 0.22)
-            check(app._reference_chat_panel.winfo_viewable(), "chat nao voltou ao receber mensagem")
+            check(app._reference_chat_panel.winfo_viewable(), "chat nao permaneceu visivel ao receber mensagem")
             check(any("TESTE-CHAT-VISIVEL" in row.get("message", "") for row in app.chat_history),
                   "mensagem nao entrou no historico real")
 
-            # Saved-conversation opening must also restore the real chat surface.
+            # New and saved conversations must both keep the real chat surface.
             conversation_id = app.active_conversation_id
             app._new_conversation()
             pump(app, 0.12)
-            check(not app._reference_chat_panel.winfo_viewable(), "nova conversa vazia deveria abrir na home")
+            check(app._reference_chat_panel.winfo_viewable(), "nova conversa ocultou o chat")
             app._switch_conversation(conversation_id)
             pump(app, 0.28)
-            check(app._reference_chat_panel.winfo_viewable(), "historico nao reabriu o chat")
+            check(app._reference_chat_panel.winfo_viewable(), "historico nao manteve o chat visivel")
 
-            # Composer stays interactive after all home/chat transitions.
+            # Composer stays interactive after all conversation transitions.
             app._composer_focus_in()
             app.text_input.delete("1.0", "end")
             app.text_input.insert("1.0", "Mensagem depois de restaurar o chat")
