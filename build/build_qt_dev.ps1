@@ -33,19 +33,23 @@ if (-not ((Get-Content -LiteralPath $MainPath -Raw).Contains("from gui_qt_dev im
 }
 
 # Identity of the frozen Dev build. Same semantic version is intentional: the
-# updater compares BuildId as well as Version.
+# updater compares BuildId as well as Version. PowerShell does not use backslash
+# as a string escape, so keep the generated Python source free of \" sequences.
 $VersionPy = @"
-\"\"\"Canonical version identity generated for a JARVIS Dev candidate.\"\"\"
+"""Canonical version identity generated for a JARVIS Dev candidate."""
 from jarvis_identity import PUBLIC_NAME, WAKE_NAME, LEGACY_NAME
-VERSION = \"$Version\"
-BUILD = \"$BuildId\"
-CHANNEL = \"dev\"
-INTERNAL_NAME = \"JARVIS\"
+VERSION = "$Version"
+BUILD = "$BuildId"
+CHANNEL = "dev"
+INTERNAL_NAME = "JARVIS"
 def display_version():
     return VERSION
-__all__ = [\"VERSION\", \"BUILD\", \"CHANNEL\", \"PUBLIC_NAME\", \"INTERNAL_NAME\", \"WAKE_NAME\", \"LEGACY_NAME\", \"display_version\"]
+__all__ = ["VERSION", "BUILD", "CHANNEL", "PUBLIC_NAME", "INTERNAL_NAME", "WAKE_NAME", "LEGACY_NAME", "display_version"]
 "@
-Set-Content -LiteralPath (Join-Path $Root "jarvis_version.py") -Value $VersionPy -Encoding utf8
+$VersionPyPath = Join-Path $Root "jarvis_version.py"
+Set-Content -LiteralPath $VersionPyPath -Value $VersionPy -Encoding utf8
+python -m py_compile $VersionPyPath
+if ($LASTEXITCODE -ne 0) { throw "jarvis_version.py Dev gerado com sintaxe invalida" }
 
 $IconFile = Join-Path $Root "jarvis.ico"
 $VersionFile = Join-Path $Root "build\version_info.txt"
@@ -90,7 +94,13 @@ $Args = @(
     "--additional-hooks-dir", $HooksDir,
     "--add-data", "$DataDir;data", "--add-data", "$PluginsDir;plugins",
     "--add-data", "$UpdateConfig;.", "--add-data", "$IconFile;.",
-    "--collect-all", "PySide6", "--collect-all", "customtkinter", "--collect-all", "sounddevice",
+    # Do not --collect-all PySide6. That pulled every Qt module/QML plugin into
+    # the candidate, added minutes to Analysis and hundreds of unnecessary MB.
+    # PyInstaller follows the real imports; these explicit modules cover the
+    # rebuilt shell and the existing Qt voice overlay.
+    "--hidden-import", "PySide6.QtCore", "--hidden-import", "PySide6.QtGui",
+    "--hidden-import", "PySide6.QtWidgets",
+    "--collect-all", "customtkinter", "--collect-all", "sounddevice",
     "--collect-all", "vosk", "--collect-submodules", "edge_tts",
     "--hidden-import", "send2trash", "--hidden-import", "send2trash.win",
     "--hidden-import", "send2trash.win.modern", "--hidden-import", "send2trash.win.legacy",
@@ -103,10 +113,20 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller Qt Dev falhou" }
 Require-Path $ExePath "JARVIS.exe"
 
 $RuntimeReport = Join-Path $WorkDir "runtime-selftest.json"
+Remove-Item -Force $RuntimeReport -ErrorAction SilentlyContinue
 $Runtime = Start-Process -FilePath $ExePath -ArgumentList @("--runtime-selftest", $RuntimeReport) -Wait -PassThru
-if ($Runtime.ExitCode -ne 0) { throw "Runtime-selftest Qt Dev falhou: $($Runtime.ExitCode)" }
+if ($Runtime.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $RuntimeReport) {
+        Write-Host "[QT-DEV] Runtime selftest report:"
+        Write-Host (Get-Content -LiteralPath $RuntimeReport -Raw)
+    }
+    throw "Runtime-selftest Qt Dev falhou: $($Runtime.ExitCode)"
+}
 $Report = Get-Content -LiteralPath $RuntimeReport -Raw | ConvertFrom-Json
-if (-not $Report.ok -or -not $Report.checks.pyside6) { throw "Runtime congelado nao confirmou PySide6" }
+if (-not $Report.ok -or -not $Report.checks.pyside6) {
+    Write-Host (Get-Content -LiteralPath $RuntimeReport -Raw)
+    throw "Runtime congelado nao confirmou PySide6"
+}
 
 $Iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
 if (-not $Iscc) { $Iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source }
