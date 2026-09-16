@@ -1,7 +1,7 @@
 """Approved JARVIS reference-scene asset loader.
 
 The binary is stored as small base64 source chunks so GitHub text-only edits can
-still reproduce the exact 2560x1440 JPEG during CI/build.  Release builds call
+still reproduce the exact 2560x1440 JPEG during CI/build. Release builds call
 ``ensure_reference_scene`` before PyInstaller and then bundle only the JPEG.
 """
 from __future__ import annotations
@@ -13,8 +13,9 @@ from pathlib import Path
 REFERENCE_WIDTH = 2560
 REFERENCE_HEIGHT = 1440
 REFERENCE_RELATIVE_PATH = Path("assets") / "jarvis_reference_scene_1440p.jpg"
+REFERENCE_BASE64_LENGTH = 72884
 
-# Exact ordered source.  Legacy .03-.07 chunks are intentionally not used: they
+# Exact ordered source. Legacy .03-.07 chunks are intentionally not used: they
 # were truncated during an earlier upload and remain only as harmless history.
 REFERENCE_PARTS = (
     "jarvis_reference_scene_1440p.b64.00",
@@ -85,8 +86,10 @@ def ensure_reference_scene(root: str | Path | None = None, *, validate: bool = T
         raise FileNotFoundError("missing reference scene parts: " + ", ".join(missing))
 
     joined = "".join(encoded)
-    if len(joined) != 72880:
-        raise RuntimeError(f"reference base64 length {len(joined)} != 72880")
+    if len(joined) != REFERENCE_BASE64_LENGTH:
+        raise RuntimeError(
+            f"reference base64 length {len(joined)} != {REFERENCE_BASE64_LENGTH}"
+        )
     try:
         payload = base64.b64decode(joined, validate=True)
     except Exception as exc:
@@ -112,6 +115,7 @@ __all__ = [
     "REFERENCE_WIDTH",
     "REFERENCE_HEIGHT",
     "REFERENCE_RELATIVE_PATH",
+    "REFERENCE_BASE64_LENGTH",
     "REFERENCE_PARTS",
     "ensure_reference_scene",
     "reference_digest",
