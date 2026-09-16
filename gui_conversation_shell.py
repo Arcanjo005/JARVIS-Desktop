@@ -1,14 +1,23 @@
 """Stable JARVIS release shell matching the approved cinematic reference."""
 from __future__ import annotations
 
+from collections import deque
+from datetime import datetime
+import json
+import platform
 import re
+import sys
 import threading
 import time
 import tkinter as tk
+import unicodedata
+from urllib.parse import quote_plus
 
 import customtkinter as ctk
 from PIL import ImageTk
 
+import jarvis_router as _jarvis_router
+from jarvis_router import context_status as v8_context_status, remember_topic as v8_remember_topic
 from gui_reference_exact_v3 import (
     JarvisGUI as ResponsiveJarvisGUI,
     MessageText,
@@ -19,16 +28,99 @@ from jarvis_reference_scene_139 import render_reference_scene
 from jarvis_voice_lifecycle_136 import VoiceLifecycle136Mixin
 
 
+def _fold_text(value: str) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "").lower())
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"[^a-z0-9 ]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+# Guard conservador para planos pessoais. "Eu quero montar uma bancada" e
+# "vou criar um espaço no quarto" sao conversa; "crie uma pasta" continua
+# sendo comando. O router importou classify_speech_act como global, por isso a
+# correcao e instalada no namespace que realmente toma a decisao.
+_original_router_classify = getattr(_jarvis_router, "classify_speech_act", None)
+if callable(_original_router_classify) and not getattr(_jarvis_router, "_jarvis_personal_plan_guard", False):
+    def _jarvis_personal_plan_classify(text: str):
+        key = _fold_text(text)
+        personal_plan = re.match(
+            r"^(?:eu\s+)?(?:quero|vou|pretendo|planejo|penso\s+em|estou\s+pensando\s+em|to\s+pensando\s+em)\s+"
+            r"(?:montar|criar|fazer|construir|produzir|organizar)\b",
+            key,
+        )
+        digital_object = re.search(
+            r"\b(?:pasta|arquivo|regra|rotina|atalho|screenshot|print|planilha|documento)\b",
+            key,
+        )
+        if personal_plan and not digital_object:
+            return "assertion"
+        return _original_router_classify(text)
+
+    _jarvis_router.classify_speech_act = _jarvis_personal_plan_classify
+    _jarvis_router._jarvis_personal_plan_guard = True
+
+
 class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
-    """Responsive UI, safe boot, fast chat and the approved 1.3.9 visual shell."""
+    """Responsive UI, safe boot, fast chat and the approved cinematic shell."""
 
     def __init__(self, *args, **kwargs):
+        # Precisa existir antes do super: o construtor base ja pode registrar
+        # mensagens e estados que sao uteis no relatorio de diagnostico.
+        self._diagnostic_events = deque(maxlen=360)
+        self._diagnostic_lock = threading.Lock()
+        self._last_user_request = ""
+        self._last_failed_request = ""
         self._antonio_tts = None
         self._pre_action_ack_until = 0.0
         self._pre_action_ack_text = ""
         self._jarvis_detail_mode = False
         super().__init__(*args, **kwargs)
         self._install_fast_chat_path()
+        self._diag("boot", "shell cinematico carregado")
+
+    def _diag(self, event: str, detail: str = "", **data) -> None:
+        try:
+            row = {
+                "time": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+                "event": str(event or "event"),
+                "detail": str(detail or "")[:1200],
+            }
+            if data:
+                row["data"] = data
+            with self._diagnostic_lock:
+                self._diagnostic_events.append(row)
+        except Exception:
+            pass
+
+    def add_message(self, sender: str, message: str, is_user: bool = False, is_jarvis: bool = False, is_system: bool = False, speak: bool = False):
+        text = str(message or "")
+        try:
+            self._diag(
+                "message",
+                text,
+                sender=str(sender or ""),
+                user=bool(is_user),
+                jarvis=bool(is_jarvis),
+                system=bool(is_system),
+            )
+            if is_user:
+                retry_key = _fold_text(text)
+                if retry_key not in {"tenta de novo", "tenta novamente", "tenta outra vez", "repete", "repete a pergunta"}:
+                    self._last_user_request = text.strip()
+            elif is_jarvis:
+                key = _fold_text(text)
+                if any(marker in key for marker in (
+                    "nao respondeu a tempo",
+                    "demorou mais que o esperado",
+                    "nao consegui concluir a resposta neste turno",
+                    "pode enviar novamente",
+                    "pode mandar de novo",
+                )):
+                    self._last_failed_request = str(getattr(self, "_last_user_request", "") or "").strip()
+                    self._diag("remote_timeout", text, retry_target=self._last_failed_request[:500])
+        except Exception:
+            pass
+        return super().add_message(sender, message, is_user=is_user, is_jarvis=is_jarvis, is_system=is_system, speak=speak)
 
     def _create_main_layout(self):
         super()._create_main_layout()
@@ -76,11 +168,11 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             self.reference_search_entry = None
 
         try:
-            self.copy_conversation_button = self._button(self.side_panel, "Copiar conversa", self._copy_conversation, width=110)
+            self.copy_conversation_button = self._button(self.side_panel, "Copiar diagnóstico", self._copy_full_diagnostic, width=110)
             self.copy_conversation_button.configure(height=34, fg_color="#061522", hover_color="#0c2740", text_color="#a9c5d6")
             anchor = self.reference_search_entry or self._new_chat_button
             self.copy_conversation_button.pack(fill="x", padx=17, pady=(0, 8), after=anchor)
-            self.root.bind("<Control-Shift-C>", lambda event=None: self._copy_conversation(), add="+")
+            self.root.bind("<Control-Shift-C>", lambda event=None: self._copy_full_diagnostic(), add="+")
         except Exception:
             self.copy_conversation_button = None
 
@@ -139,6 +231,97 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         self._place_history()
         self.root.bind("<F1>", lambda event=None: self._show_functions(), add="+")
 
+    def _copy_full_diagnostic(self):
+        """Copy conversation plus runtime evidence needed to reproduce failures."""
+        self._diag("diagnostic_copy", "usuario solicitou diagnostico completo")
+        try:
+            from jarvis_version import JARVIS_VERSION
+        except Exception:
+            JARVIS_VERSION = "?"
+
+        try:
+            root_geometry = self.root.geometry()
+        except Exception:
+            root_geometry = "?"
+        try:
+            widget_scale = float(self._center._get_widget_scaling())
+        except Exception:
+            widget_scale = 1.0
+        try:
+            window_scale = float(self._center._get_window_scaling())
+        except Exception:
+            window_scale = 1.0
+
+        core = getattr(self, "core", None)
+        try:
+            api_status = core.get_api_status() if core is not None else "indisponível"
+        except Exception as exc:
+            api_status = f"erro: {exc}"
+        core_health = {
+            "available": bool(getattr(core, "is_available", lambda: False)()) if core is not None else False,
+            "last_remote_success_at": str(getattr(core, "last_remote_success_at", "")),
+            "last_remote_error_at": str(getattr(core, "last_remote_error_at", "")),
+            "last_remote_error": str(getattr(core, "last_remote_error", ""))[:1000],
+            "api_status": str(api_status),
+        }
+
+        antonio = getattr(self, "_antonio_tts", None)
+        voice = getattr(self, "voice_engine", None)
+        runtime = {
+            "version": str(JARVIS_VERSION),
+            "timestamp_local": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "platform": platform.platform(),
+            "python": sys.version.split()[0],
+            "geometry": root_geometry,
+            "widget_scale": widget_scale,
+            "window_scale": window_scale,
+            "interaction_mode": str(getattr(self, "interaction_mode", "")),
+            "captions_enabled": bool(getattr(self, "_captions_enabled", False)),
+            "chat_tts_enabled": bool(getattr(self, "_chat_tts_enabled", False)),
+            "antonio_speaking": bool(getattr(antonio, "speaking", False)) if antonio is not None else False,
+            "voice_engine_started": bool(getattr(voice, "_started", False)) if voice is not None else False,
+            "window_manager_loaded": bool(getattr(self, "window_manager", None)),
+            "optional_import_errors": dict(getattr(self, "_advanced_import_errors", {}) or {}),
+            "core": core_health,
+        }
+
+        try:
+            context = v8_context_status()
+        except Exception as exc:
+            context = {"error": str(exc)}
+        try:
+            with self._diagnostic_lock:
+                events = list(self._diagnostic_events)
+        except Exception:
+            events = []
+        try:
+            logs = list(self.logger.get_buffer_logs(100))
+        except Exception:
+            logs = []
+        try:
+            conversation = self._conversation_as_text()
+        except Exception as exc:
+            conversation = f"<falha ao exportar conversa: {exc}>"
+
+        report = "\n".join((
+            "=== JARVIS - DIAGNÓSTICO COMPLETO ===",
+            json.dumps(runtime, ensure_ascii=False, indent=2, default=str),
+            "",
+            "=== CONTEXTO / REFERÊNCIAS ===",
+            json.dumps(context, ensure_ascii=False, indent=2, default=str),
+            "",
+            "=== LINHA DO TEMPO DA SESSÃO ===",
+            json.dumps(events, ensure_ascii=False, indent=2, default=str),
+            "",
+            "=== LOGS RECENTES ===",
+            "\n".join(str(row) for row in logs) or "<sem logs no buffer>",
+            "",
+            "=== CONVERSA COMPLETA ===",
+            conversation,
+        ))
+        self._copy_to_clipboard(report)
+        return report
+
     def _position_reference_update(self):
         """Pin updater in physical Tk pixels, bypassing CTk place scaling."""
         button = getattr(self, "update_button", None)
@@ -172,7 +355,7 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             self.reference_switch_bar.grid(row=7, column=0, sticky="ew", pady=(5, 0))
             self._chat_tts_var = tk.BooleanVar(value=bool(getattr(self, "_chat_tts_enabled", True)))
             self._captions_var = tk.BooleanVar(value=bool(getattr(self, "_captions_enabled", True)))
-            self._reference_fast_var = tk.BooleanVar(value=True)
+            self._reference_fast_var = tk.BooleanVar(value=False)
             self._reference_detail_var = tk.BooleanVar(value=False)
             def make_switch(text, variable, command):
                 return ctk.CTkSwitch(self.reference_switch_bar, text=text, variable=variable, command=command, progress_color="#159cff", button_color="#dff7ff", button_hover_color="#ffffff", fg_color="#243850", text_color="#e8f5fc", font=ctk.CTkFont(size=11), height=28)
@@ -215,14 +398,12 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         enabled = bool(self._reference_fast_var.get())
         if enabled:
             self._reference_detail_var.set(False); self._jarvis_detail_mode = False
-        elif not bool(self._reference_detail_var.get()): self._reference_fast_var.set(True)
         try: setattr(self.core, "jarvis_detail_mode", bool(self._jarvis_detail_mode))
         except Exception: pass
 
     def _toggle_reference_detail(self):
         enabled = bool(self._reference_detail_var.get()); self._jarvis_detail_mode = enabled
         if enabled: self._reference_fast_var.set(False)
-        elif not bool(self._reference_fast_var.get()): self._reference_fast_var.set(True)
         try: setattr(self.core, "jarvis_detail_mode", bool(self._jarvis_detail_mode))
         except Exception: pass
 
@@ -238,9 +419,6 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         self._layout_reference_switches(logical_w)
         self._position_reference_update()
 
-        # The hero is decorative; composer, transcript and switches are not.
-        # Under compact/HiDPI windows the previous 58% hero target consumed more
-        # vertical space than Tk actually had, pushing the composer below root.
         hide_hero = logical_h < 560
         if hide_hero:
             self._hero.grid_remove()
@@ -322,19 +500,62 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
         if re.search(r"\b(?:abre|abra|abrir|fecha|feche|fechar|minimiza|maximiza|move|mova|pesquisa|pesquise|pesquisar|procura|buscar|busca|clica|clique|pausa|continua|toque|toca|volume|arquivo|pasta|monitor|tela)\b",key):return False
         return bool(text.endswith("?") or re.match(r"^(?:o que|oq|qual|quais|quem|quanto|quantos|quanta|quantas|como|por que|porque|onde|quando|me diga|me explica|explique|define|defina)\b",key))
 
+    @staticmethod
+    def _local_social_reply(message: str) -> str:
+        key = _fold_text(message)
+        hour = datetime.now().hour
+        greeting = "Bom dia" if 5 <= hour < 12 else "Boa tarde" if 12 <= hour < 18 else "Boa noite"
+        if key in {"oi", "ola", "opa", "eai", "e ai", "oi jarvis", "ola jarvis", "opa jarvis", "eai jarvis", "e ai jarvis"}:
+            return f"{greeting}, senhor. Em que posso ser útil?"
+        if key in {"pode me ajudar", "pode me ajudar por favor", "me ajuda", "me ajuda por favor", "consegue me ajudar"}:
+            return "Claro, senhor. Com o que precisa de ajuda?"
+        return ""
+
     def _install_fast_chat_path(self):
         core=getattr(self,"core",None);original=getattr(core,"process_message_stream",None)
         if not callable(original) or bool(getattr(core,"_jarvis_139_fast_path",False)):return
-        def fast_stream(message,conversation_history,memories,system_commands_info="",on_chunk=None,speaker_name="",source="text"):
-            if str(source or "text").lower()=="text" and not bool(getattr(self,"_jarvis_detail_mode",False)) and self._fast_standalone_question(message):
+        def fast_stream(message,conversation_history,memories,system_commands_info="",on_chunk=None,_remote_retry=False,speaker_name="",source="text"):
+            raw_message=str(message or "")
+            retry_key=_fold_text(raw_message)
+            if retry_key in {"tenta de novo","tenta novamente","tenta outra vez","repete","repete a pergunta"} and str(getattr(self,"_last_failed_request","") or "").strip():
+                raw_message=self._last_failed_request
+                self._diag("retry_resolved", message, resolved=raw_message[:600])
+
+            local=self._local_social_reply(raw_message)
+            if local and not _remote_retry:
+                self._diag("local_social", raw_message, response=local)
+                if callable(on_chunk):
+                    try:on_chunk(local)
+                    except Exception:pass
+                return local
+
+            if str(source or "text").lower()=="text" and not bool(getattr(self,"_jarvis_detail_mode",False)) and self._fast_standalone_question(raw_message):
                 conversation_history=list(conversation_history or [])[-2:];memories=[];system_commands_info=""
-            return original(message,conversation_history,memories,system_commands_info,on_chunk=on_chunk,speaker_name=speaker_name,source=source)
+
+            now=datetime.now().astimezone()
+            local_clock=f"horario_local={now:%Y-%m-%d %H:%M:%S}; periodo={'manha' if 5 <= now.hour < 12 else 'tarde' if 12 <= now.hour < 18 else 'noite'}"
+            info=str(system_commands_info or "").strip()
+            if info.startswith("CTX:"):
+                system_commands_info=f"{info} | {local_clock}"
+            elif info:
+                system_commands_info=f"CTX: {info} | {local_clock}"
+            else:
+                system_commands_info=f"CTX: {local_clock}"
+
+            return original(raw_message,conversation_history,memories,system_commands_info,on_chunk=on_chunk,_remote_retry=_remote_retry,speaker_name=speaker_name,source=source)
         core.process_message_stream=fast_stream;core._jarvis_139_fast_path=True
+
+    def _on_antonio_tts_chunk(self, chunk: str):
+        clean=" ".join(str(chunk or "").split()).strip()
+        if not clean:return
+        self._diag("tts_chunk", clean)
+        try:self._post_ui_call(self._set_voice_overlay_text, clean)
+        except Exception:pass
 
     def _get_antonio_tts(self):
         engine=self._antonio_tts
         if engine is not None:return engine
-        engine=AntonioNeuralTTS(project_dir=self.project_dir,logger=getattr(self,"logger",None),on_start=getattr(self,"_on_voice_tts_start",None),on_end=getattr(self,"_on_voice_tts_end",None));self._antonio_tts=engine;return engine
+        engine=AntonioNeuralTTS(project_dir=self.project_dir,logger=getattr(self,"logger",None),on_start=getattr(self,"_on_voice_tts_start",None),on_chunk=self._on_antonio_tts_chunk,on_end=getattr(self,"_on_voice_tts_end",None));self._antonio_tts=engine;return engine
 
     def _speak(self,text:str):
         clean=str(text or "").strip()
@@ -357,12 +578,68 @@ class JarvisGUI(VoiceLifecycle136Mixin, ResponsiveJarvisGUI):
             return self._get_antonio_tts().speak(clean,interrupt=True)
         except Exception:return None
 
+    def _resolve_browser_context(self, value: str):
+        if not value.startswith("v8:browser_search:"):
+            return value, "", ""
+        payload=value[len("v8:browser_search:"):]
+        if "|" not in payload:
+            return value, "", ""
+        browser,query=payload.split("|",1)
+        query=" ".join(query.split()).strip()
+        key=_fold_text(query)
+        youtube=bool(re.search(r"\byoutube\b",key))
+        subject=re.sub(r"\s+(?:no|na|do|da)?\s*youtube\b.*$","",key).strip() if youtube else key
+        pronoun=subject in {"isso","isto","aquilo","esse","essa","este","esta"}
+        topic=""
+        if pronoun:
+            try:topic=str((v8_context_status() or {}).get("topic") or "").strip()
+            except Exception:topic=""
+        resolved=topic if pronoun and topic else query
+        if youtube and resolved:
+            # Se veio "isso no YouTube", nao mande "isso" para o buscador.
+            # Abra diretamente a busca do YouTube com o topico resolvido.
+            resolved_subject=topic if pronoun and topic else re.sub(r"\s+(?:no|na|do|da)?\s*youtube\b.*$","",query,flags=re.I).strip()
+            if resolved_subject:
+                url=f"https://www.youtube.com/results?search_query={quote_plus(resolved_subject)}"
+                return f"v8:open_site_in_app:{browser}|{url}", resolved_subject, query
+        if pronoun and topic:
+            return f"v8:browser_search:{browser}|{topic}", topic, query
+        return value, query, query
+
     def _execute_v8_command_result(self,command:str):
-        value=str(command or "")
-        if value.startswith("v8:browser_search:"):
+        original_value=str(command or "")
+        value=original_value
+
+        # O controlador de janelas e lazy. Um comando real deve carrega-lo sob
+        # demanda em vez de responder que o recurso "nao carregou".
+        if re.match(r"^(?:minimize|minimiza|minimizar|maximize|maximiza|maximizar|expande|expanda|expandir|restaure|restaura|restaurar)\b",value,re.I):
+            try:
+                if not getattr(self,"window_manager",None):
+                    self._ensure_window_manager()
+            except Exception as exc:
+                self._diag("window_manager_load_error",str(exc))
+
+        value,resolved_query,raw_query=self._resolve_browser_context(value)
+        if value != original_value:
+            self._diag("context_resolution",raw_query,resolved=resolved_query,command=value)
+
+        is_search=original_value.startswith("v8:browser_search:")
+        if is_search:
             self._pre_action_ack_text="Certo, pesquisando.";self._pre_action_ack_until=time.monotonic()+3.0
             threading.Thread(target=self._speak_action_ack,args=(self._pre_action_ack_text,),name="JARVIS-ACTION-ACK",daemon=True).start()
-        return super()._execute_v8_command_result(command)
+
+        started=time.perf_counter()
+        outcome=super()._execute_v8_command_result(value)
+        elapsed_ms=round((time.perf_counter()-started)*1000.0,1)
+        try:
+            self._diag("local_command",original_value,executed=value,duration_ms=elapsed_ms,outcome=dict(outcome or {}))
+        except Exception:
+            pass
+
+        if is_search and bool((outcome or {}).get("success")) and resolved_query:
+            try:v8_remember_topic(resolved_query)
+            except Exception:pass
+        return outcome
 
     def _deliver_text_speech(self,text):
         ticket=getattr(self,"_text_speech_token",None);self._text_speech_token=None
