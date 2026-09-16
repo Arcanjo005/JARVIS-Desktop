@@ -58,7 +58,9 @@ def main():
 
     check("REFERENCE_WIDTH = 2560" in asset_source and "REFERENCE_HEIGHT = 1440" in asset_source,
           "asset aprovado nao exige resolucao 2560x1440")
-    check("len(joined) != 72880" in asset_source and "base64.b64decode(joined, validate=True)" in asset_source,
+    check("REFERENCE_BASE64_LENGTH = 72884" in asset_source and
+          "len(joined) != REFERENCE_BASE64_LENGTH" in asset_source and
+          "base64.b64decode(joined, validate=True)" in asset_source,
           "asset nao tem gate de integridade base64")
     check("from gui_reference_release_1312 import JarvisGUI" in prepare,
           "prepare_release nao ativa a shell 1.3.12")
@@ -67,7 +69,7 @@ def main():
     check('"--add-data", "$DataDir;data"' in build,
           "build deixou de incluir a pasta data que carrega o cenário")
 
-    # Reconstruct and validate the actual scene now.  This catches missing or
+    # Reconstruct and validate the actual scene now. This catches missing or
     # truncated chunks before a Windows installer can be published.
     from jarvis_reference_asset import ensure_reference_scene
     from PIL import Image
