@@ -2,8 +2,8 @@ name: JARVIS UI Quality
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main, ui/responsive-quality, fix/voice-lifecycle-136]
+  pull_request:
+    branches: [main]
     paths:
       - "**.py"
       - "requirements.txt"
