@@ -6,7 +6,7 @@ on:
       version:
         description: "Versão do JARVIS"
         required: true
-        default: "1.3.11"
+        default: "1.3.12"
   push:
     branches:
       - main
@@ -64,7 +64,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Preparacao canonica falhou" }
           python tools/ui_preflight.py --version "$env:RELEASE_VERSION"
           if ($LASTEXITCODE -ne 0) { throw "Preflight falhou" }
-          foreach ($test in @("jarvis_hot_update_selftest.py", "jarvis_desktop_selftest.py", "jarvis_build16_selftest.py", "jarvis_v8_selftest.py", "jarvis_voice_lifecycle_selftest.py", "jarvis_139_selftest.py", "jarvis_reference_final_selftest.py", "jarvis_ui_selftest.py")) {
+          foreach ($test in @("jarvis_hot_update_selftest.py", "jarvis_desktop_selftest.py", "jarvis_build16_selftest.py", "jarvis_v8_selftest.py", "jarvis_voice_lifecycle_selftest.py", "jarvis_139_selftest.py", "jarvis_reference_final_selftest.py", "jarvis_ui_selftest.py", "jarvis_reference_ui_smoke.py")) {
             python $test
             if ($LASTEXITCODE -ne 0) { throw "$test falhou" }
           }
