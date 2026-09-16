@@ -1,0 +1,56 @@
+name: JARVIS Qt Dev Check
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ui/qt-reference-rebuild
+    paths:
+      - "gui_qt_reference*.py"
+      - "jarvis_qt_bridge.py"
+      - "jarvis_qt_ui_smoke.py"
+      - "memory_store.py"
+      - ".github/workflows/qt-dev.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qt-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Qt runtime only
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check "PySide6>=6.8,<7"
+          if ($LASTEXITCODE -ne 0) { throw "PySide6 install failed" }
+      - name: Compile rebuilt UI
+        shell: pwsh
+        run: |
+          python -m py_compile gui_qt_reference.py gui_qt_reference_v2.py jarvis_qt_bridge.py jarvis_qt_ui_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw "Qt compile gate failed" }
+      - name: Exercise rebuilt chat shell
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python jarvis_qt_ui_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw "Qt UI smoke failed" }
+      - name: Upload visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qt-reference-v2-evidence
+          path: validation/qt-reference-v2.png
+          if-no-files-found: warn
+          retention-days: 7
