@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -62,11 +63,22 @@ def activate_conversation_shell():
 
 
 def prepare_reference_asset():
+    """Rebuild, verify and stage the approved scene in the already-bundled data dir."""
     from jarvis_reference_asset import ensure_reference_scene
 
-    path = ensure_reference_scene(ROOT, validate=True)
-    print(f"Cena de referência validada: {path}")
-    return path
+    source = ensure_reference_scene(ROOT, validate=True)
+    staged = ROOT / "data" / "jarvis_reference_scene_1440p.jpg"
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, staged)
+
+    # Validate the staged copy too.  build_windows.ps1 already bundles the whole
+    # data directory, so this avoids another fragile PyInstaller add-data path.
+    from PIL import Image
+    with Image.open(staged) as image:
+        if tuple(image.size) != (2560, 1440) or str(image.format or "").upper() != "JPEG":
+            raise RuntimeError(f"cena staged inválida: {image.size} / {image.format}")
+    print(f"Cena de referência validada e staged: {staged}")
+    return staged
 
 
 def main():
