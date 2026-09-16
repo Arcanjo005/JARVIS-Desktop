@@ -38,18 +38,20 @@ def write_version_resource(version: str):
 
 
 def activate_conversation_shell():
-    """Use the final reference-first shell in release builds."""
-    final_shell = ROOT / "gui_reference_final_1311.py"
+    """Use the approved 1.3.12 reference shell in release builds."""
+    final_shell = ROOT / "gui_reference_release_1312.py"
     if not final_shell.is_file():
-        raise RuntimeError("gui_reference_final_1311.py ausente")
+        raise RuntimeError("gui_reference_release_1312.py ausente")
 
     main_path = ROOT / "main.py"
     text = main_path.read_text(encoding="utf-8")
     candidates = (
         "from gui import JarvisGUI",
         "from gui_conversation_shell import JarvisGUI",
+        "from gui_reference_final_1311 import JarvisGUI",
+        "from gui_reference_final_1312 import JarvisGUI",
     )
-    new = "from gui_reference_final_1311 import JarvisGUI"
+    new = "from gui_reference_release_1312 import JarvisGUI"
     if new in text:
         return
     for old in candidates:
@@ -57,6 +59,14 @@ def activate_conversation_shell():
             main_path.write_text(text.replace(old, new, 1), encoding="utf-8")
             return
     raise RuntimeError("Import de JarvisGUI não encontrado em main.py")
+
+
+def prepare_reference_asset():
+    from jarvis_reference_asset import ensure_reference_scene
+
+    path = ensure_reference_scene(ROOT, validate=True)
+    print(f"Cena de referência validada: {path}")
+    return path
 
 
 def main():
@@ -72,6 +82,10 @@ def main():
     repository = args.repository.strip().strip("/")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise SystemExit("repository deve estar no formato OWNER/REPO")
+
+    # Fail early if the visual asset cannot be reconstructed exactly.  This
+    # prevents another release from silently falling back to the old scene.
+    prepare_reference_asset()
 
     version_file = ROOT / "jarvis_version.py"
     text = version_file.read_text(encoding="utf-8")
