@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import tempfile
 import time
 
@@ -50,12 +51,14 @@ def check(value, message):
 
 def main():
     app = QApplication.instance() or QApplication([])
+    evidence = Path("validation")
+    evidence.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="jarvis-qt-smoke-") as td:
         os.environ["JARVIS_APP_DIR"] = td
         window = JarvisGUI(Logger(), object(), Core())
         window.resize(1280, 780)
         window.show()
-        wait(140)
+        wait(160)
 
         check(window.sidebar.width() == 286, "sidebar Qt perdeu largura de referencia")
         check(window.topbar.isVisible(), "topbar Qt ausente")
@@ -82,6 +85,11 @@ def main():
               "mensagem do usuario nao persistiu")
         check(any(row.get("is_jarvis") and "Resposta Qt para" in row.get("message", "") for row in rows),
               "resposta Qt nao persistiu")
+
+        app.processEvents()
+        screenshot = window.grab()
+        check(not screenshot.isNull(), "captura visual Qt falhou")
+        check(screenshot.save(str(evidence / "qt-reference-v2.png")), "nao salvou evidencia visual Qt")
 
         old_id = window.bridge.active_conversation_id
         window.bridge.new_conversation()
