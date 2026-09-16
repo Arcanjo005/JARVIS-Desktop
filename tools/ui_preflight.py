@@ -32,12 +32,15 @@ def main():
     from jarvis_version import VERSION, BUILD, CHANNEL
     check(str(Version(args.version))==VERSION,"Prepared release version matches request")
     check(CHANNEL=="stable" and "desktop." in BUILD,"Canonical build identity")
-    import gui_reference_final_1311
+    import gui_reference_release_1312
+    import gui_reference_final_1312
     import gui_conversation_shell
     import gui_reference_exact_v3
     import gui
     from jarvis_voice_lifecycle_136 import VoiceLifecycle136Mixin
-    check(issubclass(gui_reference_final_1311.JarvisGUI, gui_conversation_shell.JarvisGUI),
+    check(issubclass(gui_reference_release_1312.JarvisGUI, gui_reference_final_1312.JarvisGUI),
+          "Release shell preserves approved 1.3.12 reference shell inheritance")
+    check(issubclass(gui_reference_final_1312.JarvisGUI, gui_conversation_shell.JarvisGUI),
           "Final reference shell preserves production conversation shell inheritance")
     check(issubclass(gui_conversation_shell.JarvisGUI, gui_reference_exact_v3.JarvisGUI),
           "Stable shell preserves responsive UI inheritance")
@@ -59,12 +62,17 @@ def main():
     legacy=load_orb_image()
     legacy.load()
     check(legacy.width>0 and legacy.height>0,"Retained legacy orb asset decodes")
+    reference_asset = ROOT / "data" / "jarvis_reference_scene_1440p.jpg"
+    check(reference_asset.is_file(),"Prepared 1.3.12 reference scene is staged")
+    with Image.open(reference_asset) as asset:
+        check(tuple(asset.size)==(2560,1440) and str(asset.format or "").upper()=="JPEG",
+              "Prepared reference scene decodes at 2560x1440")
     for path in sorted(ROOT.glob("*.json")):
         json.loads(path.read_text(encoding="utf-8-sig"))
     checks.append("Root JSON metadata syntax")
     entry=(ROOT/"main.py").read_text(encoding="utf-8")
     ast.parse(entry)
-    check("from gui_reference_final_1311 import JarvisGUI" in entry,"Canonical prepared entry point")
+    check("from gui_reference_release_1312 import JarvisGUI" in entry,"Canonical prepared entry point")
     check(entry.index("multiprocessing.freeze_support()") < entry.index("app = JarvisGUI("),
           "Frozen worker dispatch precedes GUI construction")
     import yaml
