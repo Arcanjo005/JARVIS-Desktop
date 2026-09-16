@@ -49,5 +49,13 @@ class JarvisGUI(ReferenceJarvisGUI):
         self._antonio_tts = engine
         return engine
 
+    def _execute_v8_command_result(self, command: str):
+        """Resolve a search reference before any browser action can see it."""
+        raw = str(command or "")
+        if raw.startswith("v8:browser_search:"):
+            contextual, _, _ = self._resolve_browser_context(raw)
+            raw = contextual
+        return super()._execute_v8_command_result(raw)
+
 
 __all__ = ["JarvisGUI"]
