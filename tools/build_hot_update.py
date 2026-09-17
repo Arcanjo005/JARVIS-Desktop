@@ -16,6 +16,7 @@ BASELINE_PATH = ROOT / "build" / "hot_runtime_baseline.json"
 RUNTIME_API = 1
 EXCLUDED_TOP_LEVEL = {
     "main.py",
+    "gui.py",
     "hot_update_runtime.py",
     "hot_update_runtime_core.py",
     "jarvis_desktop_selftest.py",
@@ -152,8 +153,6 @@ def main() -> int:
     sha_path = release_dir / f"{base_name}.zip.sha256"
 
     manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-    # Level 6 is a better latency/size tradeoff for source-only updates. Level 9
-    # spends noticeably more CPU for a very small size gain on Python sources.
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for name, data in files_payload:
             archive.writestr(name, data)
