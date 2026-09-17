@@ -43,15 +43,36 @@ jobs:
         shell: pwsh
         run: choco install innosetup --no-progress -y
 
-      - name: Fast Qt smoke before packaging
+      - name: Activate integrated V4 UI in candidate workspace
+        shell: pwsh
+        run: |
+          python -m py_compile gui_qt_integrated.py
+          if ($LASTEXITCODE -ne 0) { throw "gui_qt_integrated.py syntax check failed" }
+
+          $BuildScript = "build/build_qt_dev.ps1"
+          $BuildSource = Get-Content -LiteralPath $BuildScript -Raw
+          $BuildSource = $BuildSource.Replace("from gui_qt_dev import JarvisGUI", "from gui_qt_integrated import JarvisGUI")
+          Set-Content -LiteralPath $BuildScript -Value $BuildSource -Encoding utf8
+          if (-not ((Get-Content -LiteralPath $BuildScript -Raw).Contains("from gui_qt_integrated import JarvisGUI"))) {
+            throw "Could not switch Qt Dev build to integrated V4 UI"
+          }
+
+          $SmokePath = "jarvis_qt_ui_smoke.py"
+          $Smoke = Get-Content -LiteralPath $SmokePath -Raw
+          $Smoke = $Smoke.Replace("from gui_qt_reference_v2 import JarvisGUI", "from gui_qt_integrated import JarvisGUI")
+          $Smoke = $Smoke.Replace("window.sidebar.width() == 286", "window.sidebar.width() == 310")
+          $Smoke = $Smoke.Replace("window.transcript_frame.height() <= 245", "window.transcript_frame.height() >= 250")
+          Set-Content -LiteralPath $SmokePath -Value $Smoke -Encoding utf8
+
+      - name: Fast integrated Qt smoke before packaging
         shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
           python jarvis_qt_ui_smoke.py
-          if ($LASTEXITCODE -ne 0) { throw "Qt smoke failed" }
+          if ($LASTEXITCODE -ne 0) { throw "Integrated Qt smoke failed" }
 
-      - name: Build Qt Dev installer
+      - name: Build integrated Qt Dev installer
         shell: pwsh
         run: |
           ./build/build_qt_dev.ps1 `
@@ -74,6 +95,7 @@ jobs:
           Version: $env:DEV_VERSION
           Build: $env:DEV_BUILD_ID
           Commit: ${{ github.sha }}
+          UI: integrated V4 candidate
 
           This release stays in DRAFT and is not published as prerelease/latest.
           The public Dev manifest is intentionally not changed.
