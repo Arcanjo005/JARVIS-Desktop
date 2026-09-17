@@ -105,8 +105,12 @@ $Args = @(
     "--hidden-import", "send2trash", "--hidden-import", "send2trash.win",
     "--hidden-import", "send2trash.win.modern", "--hidden-import", "send2trash.win.legacy",
     "--hidden-import", "send2trash.win.IFileOperationProgressSink", "--hidden-import", "pystray._win32",
-    "--hidden-import", "_webrtcvad", "--hidden-import", "win32timezone",
-    "--hidden-import", "pythoncom", "--hidden-import", "pywintypes", $MainPath
+    # These modules are loaded dynamically by the voice/runtime layer, so the
+    # module graph cannot discover them from the Qt entry point on its own.
+    "--hidden-import", "webrtcvad", "--hidden-import", "_webrtcvad",
+    "--hidden-import", "voice_engine", "--hidden-import", "desktop_integration",
+    "--hidden-import", "win32timezone", "--hidden-import", "pythoncom",
+    "--hidden-import", "pywintypes", $MainPath
 )
 python -m PyInstaller @Args
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller Qt Dev falhou" }
