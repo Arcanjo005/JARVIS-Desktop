@@ -1,11 +1,11 @@
-"""Second-pass Qt composition for the JARVIS reference rebuild.
+"""Reference-driven PySide6 composition for the JARVIS desktop rebuild.
 
-This file owns the new window composition.  It deliberately reuses only the
-small Qt components from ``gui_qt_reference`` and the runtime bridge; it does not
-inherit the legacy CustomTkinter hierarchy.
+The working area is one continuous cinematic scene.  Conversation controls live
+as translucent overlays above it instead of reserving an opaque lower panel.
 """
 from __future__ import annotations
 
+import re
 import sys
 
 from PySide6.QtCore import Qt, QTimer
@@ -23,26 +23,29 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
+    QStackedLayout,
     QVBoxLayout,
     QWidget,
 )
 
 from gui_qt_reference import Composer, MessageBubble, SceneCanvas
 from jarvis_qt_bridge import JarvisQtBridge
+from jarvis_qt_composer_patch import install_composer_polish
 
 APP_BG = "#02070d"
-PANEL_BG = "rgba(2, 11, 19, 240)"
-LOWER_BG = "rgba(1, 8, 14, 246)"
-GLASS = "rgba(5, 20, 32, 222)"
-BORDER = "#16384f"
-BORDER_BRIGHT = "#2a7298"
+PANEL_BG = "rgba(2, 10, 17, 226)"
+GLASS = "rgba(5, 14, 22, 176)"
+GLASS_SOFT = "rgba(3, 10, 16, 112)"
+BORDER = "rgba(89, 132, 158, 92)"
+BORDER_BRIGHT = "rgba(82, 200, 244, 150)"
 CYAN = "#36c8ff"
 CYAN_SOFT = "#82e2ff"
 TEXT = "#edf8ff"
-MUTED = "#7899aa"
+MUTED = "#8da7b6"
 
 
-def _shadow(widget: QWidget, blur: int = 26, alpha: int = 95, y: int = 7) -> None:
+def _shadow(widget: QWidget, blur: int = 28, alpha: int = 105, y: int = 7) -> None:
     effect = QGraphicsDropShadowEffect(widget)
     effect.setBlurRadius(blur)
     effect.setOffset(0, y)
@@ -50,8 +53,91 @@ def _shadow(widget: QWidget, blur: int = 26, alpha: int = 95, y: int = 7) -> Non
     widget.setGraphicsEffect(effect)
 
 
+class RollingCaption(QFrame):
+    """Two-line subtitle window that advances instead of accumulating text.
+
+    During streaming it follows the newest page, so a long answer never remains
+    stuck on its first lines.  Once the response ends it keeps the last page for
+    a few seconds and clears itself.  No extra thread is used.
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("captionGlass")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(54)
+        self.setMaximumHeight(72)
+        self.setMaximumWidth(840)
+        self._raw_text = ""
+        self._pages: list[str] = []
+        self._visible_index = -1
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 8, 22, 9)
+        layout.setSpacing(1)
+        self.label = QLabel("")
+        self.label.setObjectName("captionText")
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setWordWrap(True)
+        self.label.setMaximumHeight(50)
+        layout.addWidget(self.label)
+
+        self._clear_timer = QTimer(self)
+        self._clear_timer.setSingleShot(True)
+        self._clear_timer.timeout.connect(self.clear_caption)
+        self.hide()
+
+    @staticmethod
+    def _paginate(text: str, target_chars: int = 112) -> list[str]:
+        clean = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not clean:
+            return []
+        words = clean.split(" ")
+        pages: list[str] = []
+        current: list[str] = []
+        current_len = 0
+        for word in words:
+            addition = len(word) + (1 if current else 0)
+            if current and current_len + addition > target_chars:
+                pages.append(" ".join(current))
+                current = [word]
+                current_len = len(word)
+            else:
+                current.append(word)
+                current_len += addition
+        if current:
+            pages.append(" ".join(current))
+        return pages
+
+    def set_stream_text(self, text: str) -> None:
+        self._clear_timer.stop()
+        self._raw_text = str(text or "")
+        self._pages = self._paginate(self._raw_text)
+        if not self._pages:
+            self.clear_caption()
+            return
+        # Always expose the newest page while chunks arrive.  This is what makes
+        # the subtitle actually progress for long streamed answers.
+        self._visible_index = len(self._pages) - 1
+        self.label.setText(self._pages[self._visible_index])
+        self.show()
+        self.raise_()
+
+    def finish_text(self, text: str) -> None:
+        self.set_stream_text(text)
+        if self._pages:
+            self._clear_timer.start(6500)
+
+    def clear_caption(self) -> None:
+        self._raw_text = ""
+        self._pages = []
+        self._visible_index = -1
+        self.label.clear()
+        self.hide()
+
+
 class JarvisGUI(QMainWindow):
-    """Reference-driven Qt shell with chat permanently reachable."""
+    """Reference-driven Qt shell with the chat floating over the workspace."""
 
     def __init__(self, logger, actions, core):
         self._owned_app = QApplication.instance() is None
@@ -94,21 +180,39 @@ class JarvisGUI(QMainWindow):
         self.topbar = self._build_topbar()
         main_layout.addWidget(self.topbar)
 
-        self.scene = SceneCanvas()
-        main_layout.addWidget(self.scene, 1)
+        stage = QWidget()
+        stage.setObjectName("stage")
+        stack = QStackedLayout(stage)
+        stack.setContentsMargins(0, 0, 0, 0)
+        stack.setStackingMode(QStackedLayout.StackingMode.StackAll)
 
-        lower = QFrame()
-        lower.setObjectName("lowerSurface")
-        lower_layout = QVBoxLayout(lower)
-        lower_layout.setContentsMargins(20, 8, 20, 12)
-        lower_layout.setSpacing(8)
+        self.scene = SceneCanvas()
+        stack.addWidget(self.scene)
+
+        overlay = QWidget()
+        overlay.setObjectName("workspaceOverlay")
+        overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        overlay_layout = QVBoxLayout(overlay)
+        overlay_layout.setContentsMargins(30, 24, 30, 22)
+        overlay_layout.setSpacing(10)
+
+        # The sphere itself is painted by SceneCanvas.  The subtitle sits below
+        # its visual center, then the transcript/composer float near the bottom.
+        overlay_layout.addStretch(7)
+        caption_row = QHBoxLayout()
+        caption_row.addStretch(1)
+        self.caption = RollingCaption()
+        caption_row.addWidget(self.caption, 0)
+        caption_row.addStretch(1)
+        overlay_layout.addLayout(caption_row)
+        overlay_layout.addStretch(2)
 
         self.transcript_frame = QFrame()
         self.transcript_frame.setObjectName("transcriptFrame")
-        self.transcript_frame.setMinimumHeight(130)
-        self.transcript_frame.setMaximumHeight(245)
+        self.transcript_frame.setMinimumHeight(96)
+        self.transcript_frame.setMaximumHeight(180)
         transcript_layout = QVBoxLayout(self.transcript_frame)
-        transcript_layout.setContentsMargins(10, 8, 10, 8)
+        transcript_layout.setContentsMargins(14, 9, 14, 8)
 
         self.transcript = QScrollArea()
         self.transcript.setObjectName("transcript")
@@ -118,25 +222,39 @@ class JarvisGUI(QMainWindow):
         self.message_host.setObjectName("messageHost")
         self.message_layout = QVBoxLayout(self.message_host)
         self.message_layout.setContentsMargins(2, 2, 2, 2)
-        self.message_layout.setSpacing(8)
+        self.message_layout.setSpacing(7)
         self.message_layout.addStretch(1)
         self.transcript.setWidget(self.message_host)
         transcript_layout.addWidget(self.transcript)
-        lower_layout.addWidget(self.transcript_frame)
+        overlay_layout.addWidget(self.transcript_frame)
 
+        composer_row = QHBoxLayout()
+        composer_row.setContentsMargins(34, 0, 34, 0)
         self.composer = Composer()
-        _shadow(self.composer)
-        lower_layout.addWidget(self.composer)
-        lower_layout.addWidget(self._build_mode_bar())
+        self.composer.setMinimumWidth(520)
+        self.composer.setMaximumWidth(920)
+        self._composer_polish = install_composer_polish(self.composer)
+        _shadow(self.composer, blur=30, alpha=120, y=8)
+        composer_row.addStretch(1)
+        composer_row.addWidget(self.composer, 1)
+        composer_row.addStretch(1)
+        overlay_layout.addLayout(composer_row)
 
-        main_layout.addWidget(lower)
+        mode_row = QHBoxLayout()
+        mode_row.addStretch(1)
+        mode_row.addWidget(self._build_mode_bar())
+        mode_row.addStretch(1)
+        overlay_layout.addLayout(mode_row)
+
+        stack.addWidget(overlay)
+        main_layout.addWidget(stage, 1)
         shell.addWidget(main, 1)
         self.setStyleSheet(self._stylesheet())
 
     def _build_topbar(self) -> QFrame:
         bar = QFrame()
         bar.setObjectName("topbar")
-        bar.setFixedHeight(50)
+        bar.setFixedHeight(48)
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(16, 6, 14, 6)
         layout.setSpacing(8)
@@ -152,7 +270,7 @@ class JarvisGUI(QMainWindow):
         self.update_button = QPushButton("↻")
         self.update_button.setObjectName("updateButton")
         self.update_button.setToolTip("Verificar atualização")
-        self.update_button.setFixedSize(40, 36)
+        self.update_button.setFixedSize(40, 34)
         layout.addWidget(self.update_button)
         return bar
 
@@ -216,7 +334,7 @@ class JarvisGUI(QMainWindow):
         bar = QFrame()
         bar.setObjectName("modeBar")
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(8, 0, 8, 0)
+        layout.setContentsMargins(10, 1, 10, 1)
         layout.setSpacing(13)
         self.mode_checks: dict[str, QCheckBox] = {}
         for text, checked in (
@@ -230,8 +348,14 @@ class JarvisGUI(QMainWindow):
             check.setChecked(checked)
             self.mode_checks[text] = check
             layout.addWidget(check)
-        layout.addStretch(1)
+        self.mode_checks["Legenda na tela"].toggled.connect(self._caption_visibility_changed)
         return bar
+
+    def _caption_visibility_changed(self, enabled: bool) -> None:
+        if enabled and self._stream_text:
+            self.caption.set_stream_text(self._stream_text)
+        else:
+            self.caption.clear_caption()
 
     def _connect_bridge(self) -> None:
         self.composer.submitted.connect(self.bridge.send_message)
@@ -252,6 +376,7 @@ class JarvisGUI(QMainWindow):
                 widget.deleteLater()
         self._stream_bubble = None
         self._stream_text = ""
+        self.caption.clear_caption()
 
     def _append_row(self, row: dict) -> MessageBubble:
         is_user = bool(row.get("is_user"))
@@ -309,6 +434,7 @@ class JarvisGUI(QMainWindow):
     def _response_started(self, generation: int) -> None:
         self._stream_generation = generation
         self._stream_text = ""
+        self.caption.clear_caption()
         self._stream_bubble = self._append_row(
             {"sender": "JARVIS", "message": "", "is_user": False}
         )
@@ -320,6 +446,8 @@ class JarvisGUI(QMainWindow):
         body = self._stream_bubble.findChild(QLabel, "bubbleText")
         if body is not None:
             body.setText(self._stream_text)
+        if self.mode_checks["Legenda na tela"].isChecked():
+            self.caption.set_stream_text(self._stream_text)
         QTimer.singleShot(0, self._scroll_to_bottom)
 
     def _response_finished(self, generation: int, text: str) -> None:
@@ -329,7 +457,9 @@ class JarvisGUI(QMainWindow):
             body = self._stream_bubble.findChild(QLabel, "bubbleText")
             if body is not None:
                 body.setText(text)
-        self._stream_text = text
+        self._stream_text = str(text or "")
+        if self.mode_checks["Legenda na tela"].isChecked():
+            self.caption.finish_text(self._stream_text)
         self._stream_bubble = None
 
     def _response_failed(self, generation: int, text: str) -> None:
@@ -350,39 +480,45 @@ class JarvisGUI(QMainWindow):
     def _stylesheet() -> str:
         return f"""
         QMainWindow#jarvisWindow, QWidget#root, QFrame#mainSurface {{ background: {APP_BG}; color: {TEXT}; }}
-        QFrame#sidebar {{ background: {PANEL_BG}; border-right: 1px solid {BORDER}; }}
-        QFrame#topbar {{ background: rgba(1,7,12,244); border-bottom: 1px solid #102b3d; }}
+        QWidget#stage, QWidget#workspaceOverlay {{ background: transparent; }}
+        QFrame#sidebar {{ background: {PANEL_BG}; border-right: 1px solid rgba(37,77,101,120); }}
+        QFrame#topbar {{ background: rgba(1,7,12,214); border-bottom: 1px solid rgba(36,70,90,78); }}
         QLabel#topTitle {{ color: {TEXT}; font: 700 13px 'Segoe UI'; }}
-        QLabel#topSubtitle {{ color: #53798e; font: 9px 'Segoe UI'; letter-spacing: 1px; }}
-        QPushButton#updateButton {{ border-radius: 18px; font: 20px 'Segoe UI'; background: #041725; border: 1px solid #1c5574; color: {CYAN_SOFT}; }}
-        QLabel#brandMark {{ border: 1px solid {CYAN}; border-radius: 25px; color: {CYAN_SOFT}; font: 22px 'Segoe UI'; }}
+        QLabel#topSubtitle {{ color: #6e8795; font: 9px 'Segoe UI'; letter-spacing: 1px; }}
+        QPushButton#updateButton {{ border-radius: 17px; font: 20px 'Segoe UI'; background: rgba(4,23,37,150); border: 1px solid rgba(53,103,132,110); color: {CYAN_SOFT}; }}
+        QLabel#brandMark {{ border: 1px solid rgba(54,200,255,155); border-radius: 25px; color: {CYAN_SOFT}; font: 22px 'Segoe UI'; }}
         QLabel#brandTitle {{ color: {TEXT}; font: 700 26px 'Segoe UI'; }}
-        QPushButton {{ color: {TEXT}; background: #071725; border: 1px solid {BORDER}; border-radius: 10px; font: 12px 'Segoe UI'; }}
-        QPushButton:hover {{ background: #0b2942; border-color: {BORDER_BRIGHT}; }}
+        QPushButton {{ color: {TEXT}; background: rgba(7,23,37,150); border: 1px solid rgba(47,82,104,100); border-radius: 10px; font: 12px 'Segoe UI'; }}
+        QPushButton:hover {{ background: rgba(11,41,66,175); border-color: rgba(70,145,184,150); }}
         QPushButton#primarySideButton {{ text-align: left; padding-left: 15px; }}
-        QLineEdit#search {{ color: {TEXT}; background: #06131e; border: 1px solid {BORDER}; border-radius: 10px; padding: 0 12px; }}
+        QLineEdit#search {{ color: {TEXT}; background: rgba(6,19,30,164); border: 1px solid rgba(47,82,104,100); border-radius: 10px; padding: 0 12px; }}
         QLabel#sectionTitle {{ color: {MUTED}; font: 600 10px 'Segoe UI'; padding-top: 8px; letter-spacing: 1px; }}
         QListWidget#history {{ background: transparent; border: 0; outline: 0; color: #cbe5f2; font: 12px 'Segoe UI'; }}
         QListWidget#history::item {{ min-height: 36px; border-radius: 8px; padding: 0 8px; }}
-        QListWidget#history::item:selected {{ background: #0d2a42; color: white; }}
-        QFrame#lowerSurface {{ background: {LOWER_BG}; border-top: 1px solid #0f2a3c; }}
-        QFrame#transcriptFrame {{ background: rgba(3,14,23,215); border: 1px solid #14374d; border-radius: 14px; }}
-        QScrollArea#transcript, QWidget#messageHost {{ background: transparent; }}
+        QListWidget#history::item:selected {{ background: rgba(13,42,66,160); color: white; }}
+
+        QFrame#captionGlass {{ background: {GLASS_SOFT}; border: 1px solid rgba(118,154,175,54); border-radius: 14px; }}
+        QLabel#captionText {{ color: #f1f7fb; background: transparent; font: 500 14px 'Segoe UI'; }}
+
+        QFrame#transcriptFrame {{ background: rgba(4,11,17,92); border: none; border-radius: 14px; }}
+        QScrollArea#transcript, QWidget#messageHost {{ background: transparent; border: none; }}
         QScrollArea#transcript > QWidget > QWidget {{ background: transparent; }}
-        QFrame#userBubble {{ background: rgba(13,48,72,235); border: 1px solid #286181; border-radius: 13px; }}
-        QFrame#jarvisBubble {{ background: rgba(5,23,36,235); border: 1px solid #153b55; border-radius: 13px; }}
-        QLabel#bubbleSender {{ color: {CYAN_SOFT}; font: 700 10px 'Segoe UI'; }}
+        QScrollBar:vertical {{ background: transparent; width: 6px; margin: 3px 0; }}
+        QScrollBar::handle:vertical {{ background: rgba(139,171,188,70); min-height: 22px; border-radius: 3px; }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+
+        QFrame#userBubble {{ background: rgba(18,29,37,176); border: 1px solid rgba(131,158,174,58); border-radius: 13px; }}
+        QFrame#jarvisBubble {{ background: rgba(9,18,25,166); border: 1px solid rgba(123,151,168,48); border-radius: 13px; }}
+        QLabel#bubbleSender {{ color: #a9dff1; font: 700 10px 'Segoe UI'; }}
         QLabel#bubbleText {{ color: {TEXT}; font: 14px 'Segoe UI'; }}
-        QFrame#composer {{ background: {GLASS}; border: 1px solid #31536d; border-radius: 20px; }}
-        QTextEdit#composerEditor {{ color: {TEXT}; background: transparent; border: 0; padding: 7px 5px; font: 14px 'Segoe UI'; }}
-        QPushButton#roundButton, QPushButton#micButton, QPushButton#sendButton {{ border-radius: 21px; font: 19px 'Segoe UI'; }}
-        QPushButton#micButton {{ background: #062c52; border-color: #168fe5; color: {CYAN_SOFT}; }}
-        QPushButton#sendButton {{ background: #0a3152; border-color: #2d8fc5; color: white; }}
-        QFrame#modeBar {{ background: transparent; }}
-        QCheckBox {{ color: {MUTED}; spacing: 6px; font: 10px 'Segoe UI'; }}
-        QCheckBox::indicator {{ width: 22px; height: 12px; border-radius: 6px; border: 1px solid #31536d; background: #091622; }}
-        QCheckBox::indicator:checked {{ background: #148ac7; border-color: {CYAN}; }}
+
+        QFrame#composer {{ background: {GLASS}; border: 1px solid {BORDER}; border-radius: 24px; }}
+        QTextEdit#composerEditor {{ color: {TEXT}; background: transparent; border: 0; padding: 7px 5px; font: 14px 'Segoe UI'; selection-background-color: rgba(54,200,255,90); }}
+        QFrame#modeBar {{ background: rgba(2,9,15,76); border: 1px solid rgba(86,119,139,34); border-radius: 12px; }}
+        QCheckBox {{ color: #8ba1ad; spacing: 6px; font: 10px 'Segoe UI'; }}
+        QCheckBox::indicator {{ width: 22px; height: 12px; border-radius: 6px; border: 1px solid rgba(72,104,123,90); background: rgba(9,22,34,160); }}
+        QCheckBox::indicator:checked {{ background: rgba(31,137,185,190); border-color: rgba(73,196,241,180); }}
         """
 
 
-__all__ = ["JarvisGUI"]
+__all__ = ["JarvisGUI", "RollingCaption"]
