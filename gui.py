@@ -2,7 +2,7 @@ from __future__ import annotations
 import os, subprocess, sys, threading, webbrowser
 from pathlib import Path
 from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication,QFileDialog,QFrame,QGraphicsDropShadowEffect,QGraphicsOpacityEffect,QHBoxLayout,QInputDialog,QLabel,QLineEdit,QListWidget,QListWidgetItem,QMainWindow,QMenu,QMessageBox,QPushButton,QScrollArea,QStackedLayout,QTextEdit,QVBoxLayout,QWidget)
 from github_updater import GitHubReleaseUpdater
 from jarvis_qt_bridge import JarvisQtBridge
@@ -27,16 +27,20 @@ def _pix(name):
     p=QPixmap(str(asset_path(name)))
     if p.isNull(): raise RuntimeError(f"Approved UI asset cannot be decoded: assets/{name}")
     return p
+def _circular_pixmap(src,size):
+    scaled=src.scaled(size,size,Qt.AspectRatioMode.KeepAspectRatioByExpanding,Qt.TransformationMode.SmoothTransformation)
+    out=QPixmap(size,size); out.fill(Qt.GlobalColor.transparent)
+    painter=QPainter(out); painter.setRenderHint(QPainter.RenderHint.Antialiasing,True); path=QPainterPath(); path.addEllipse(QRectF(0,0,size,size)); painter.setClipPath(path); painter.drawPixmap(0,0,scaled); painter.end(); return out
 
 class Scene(QWidget):
     def __init__(self):
-        super().__init__(); self.bg_src=_pix("workspace_bg.jpg"); self.orb_src=_pix("sphere_3d.webp"); self.bg=QLabel(self); self.orb=QLabel(self)
+        super().__init__(); self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents,True); self.bg_src=_pix("workspace_bg.jpg"); self.orb_src=_pix("sphere_3d.webp"); self.bg=QLabel(self); self.orb=QLabel(self)
         self.bg.setObjectName("workspaceBackground"); self.orb.setObjectName("approvedSphere")
     def resizeEvent(self,e):
         super().resizeEvent(e)
         if self.width()<4:return
         self.bg.setGeometry(self.rect()); s=self.bg_src.scaled(self.size(),Qt.AspectRatioMode.KeepAspectRatioByExpanding,Qt.TransformationMode.SmoothTransformation); self.bg.setPixmap(s.copy(max(0,(s.width()-self.width())//2),max(0,(s.height()-self.height())//2),self.width(),self.height()))
-        d=int(max(230,min(500,min(self.width(),self.height())*.46))); self.orb.setGeometry((self.width()-d)//2,max(48,int(self.height()*.39-d/2)),d,d); self.orb.setPixmap(self.orb_src.scaled(d,d,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation)); self.orb.raise_()
+        d=int(max(230,min(500,min(self.width(),self.height())*.46))); self.orb.setGeometry((self.width()-d)//2,max(48,int(self.height()*.39-d/2)),d,d); self.orb.setPixmap(_circular_pixmap(self.orb_src,d)); self.orb.raise_()
 
 class Ring(QWidget):
     def __init__(self): super().__init__(); self.value=0; self.setFixedSize(44,44)
@@ -72,11 +76,11 @@ class JarvisGUI(QMainWindow):
     voice_state=Signal(str,str); voice_command=Signal(str); voice_caption=Signal(str); voice_live=Signal(str); voice_end=Signal(); update_ready=Signal(object); update_progress=Signal(int); update_error=Signal(str); update_done=Signal(str)
     def __init__(self,logger,actions,core):
         validate_approved_assets(); self.app=QApplication.instance() or QApplication(sys.argv); super().__init__(); self.logger=logger; self.actions=actions; self.core=core; self.project_dir=str(_root()); self.voice_engine=None; self._stream=""; self._bubble=None; self._update=None; self._pulse=False; self.bridge=JarvisQtBridge(core,logger,self)
-        self.setObjectName("jarvisWindow"); self.setWindowTitle(f"JARVIS Desktop {VERSION}"); self.resize(1380,850); self.setMinimumSize(1050,680); self._build(); self.setStyleSheet(self._css()); self._wire(); self._status("ONLINE"); self.bridge.refresh_conversations(); self.bridge.load_active_conversation()
+        self.setObjectName("jarvisWindow"); self.setWindowTitle(f"JARVIS Desktop {VERSION}"); self.resize(1380,850); self.setMinimumSize(1050,680); self._build(); self.setStyleSheet(self._css()); self._wire(); self._status("ONLINE"); self.bridge.refresh_conversations(); self.bridge.load_active_conversation(); QTimer.singleShot(0,self.overlay.raise_)
         if os.getenv("JARVIS_QT_DISABLE_AUTO_VOICE")!="1":QTimer.singleShot(2400,self._start_voice)
         if os.getenv("JARVIS_QT_DISABLE_AUTO_UPDATE")!="1":QTimer.singleShot(6000,self.check_update)
     def _build(self):
-        root=QWidget(); self.setCentralWidget(root); stack=QStackedLayout(root); stack.setStackingMode(QStackedLayout.StackingMode.StackAll); self.scene=Scene(); stack.addWidget(self.scene); overlay=QWidget(); stack.addWidget(overlay); main=QHBoxLayout(overlay); main.setContentsMargins(0,0,0,0)
+        root=QWidget(); self.setCentralWidget(root); self.stack=QStackedLayout(root); self.stack.setStackingMode(QStackedLayout.StackingMode.StackAll); self.scene=Scene(); self.stack.addWidget(self.scene); self.overlay=QWidget(); self.overlay.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground,True); self.stack.addWidget(self.overlay); self.stack.setCurrentWidget(self.overlay); self.overlay.raise_(); main=QHBoxLayout(self.overlay); main.setContentsMargins(0,0,0,0)
         self.sidebar=QFrame(); self.sidebar.setObjectName("sidebar"); self.sidebar.setFixedWidth(310); side=QVBoxLayout(self.sidebar); brand=QHBoxLayout(); logo=QLabel("◈"); logo.setObjectName("brandMark"); logo.setAlignment(Qt.AlignmentFlag.AlignCenter); logo.setFixedSize(42,42); brand.addWidget(logo); brand.addWidget(QLabel("JARVIS")); brand.addStretch(); side.addLayout(brand); new=QPushButton("+  Nova conversa"); new.clicked.connect(self.bridge.new_conversation); side.addWidget(new); self.search=QLineEdit(); self.search.setPlaceholderText("Buscar conversas..."); side.addWidget(self.search); self.history=QListWidget(); self.history.setObjectName("history"); side.addWidget(self.history,1); side.addWidget(QLabel(f"v{VERSION} • {CHANNEL} • {BUILD}")); main.addWidget(self.sidebar)
         stage=QWidget(); main.addWidget(stage,1); col=QVBoxLayout(stage); col.setContentsMargins(24,16,24,18); top=QHBoxLayout(); top.addStretch(); self.status=QLabel("ONLINE"); self.status.setObjectName("status"); top.addWidget(self.status); self.update_button=QPushButton("↑"); self.update_button.setObjectName("updateButton"); self.update_button.setFixedSize(44,44); top.addWidget(self.update_button); self.ring=Ring(); self.ring.hide(); top.addWidget(self.ring); col.addLayout(top); col.addStretch(2)
         self.caption=QLabel(); self.caption.setObjectName("caption"); self.caption.setAlignment(Qt.AlignmentFlag.AlignCenter); self.caption.setWordWrap(True); shadow=QGraphicsDropShadowEffect(self.caption); shadow.setBlurRadius(7); shadow.setOffset(0,2); shadow.setColor(QColor(0,0,0,245)); self.caption.setGraphicsEffect(shadow); self.caption.hide(); col.addWidget(self.caption)
