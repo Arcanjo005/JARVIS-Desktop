@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QMenu, QMessageBox
 
 from github_updater import GitHubReleaseUpdater
 from gui_qt_reference_v2 import JarvisGUI as ReferenceQtGUI
+from jarvis_qt_composer_patch import install_composer_polish
 from jarvis_version import BUILD, CHANNEL, VERSION
 
 
@@ -22,6 +23,11 @@ class JarvisGUI(ReferenceQtGUI):
 
     def __init__(self, logger, actions, core):
         super().__init__(logger, actions, core)
+        # Keep the visual inside the QPushButtons themselves. No QLabel or
+        # overlay is placed above the controls, so the whole 46x46 area stays
+        # clickable. The polish object also filters key events on QTextEdit so
+        # Enter sends and Shift+Enter inserts a new line.
+        self._composer_polish = install_composer_polish(self.composer)
         self.updater = GitHubReleaseUpdater(
             current_version=VERSION,
             current_build=BUILD,
