@@ -1,17 +1,18 @@
-"""First-run Gemini configuration UI for JARVIS Desktop."""
+"""First-run Gemini configuration UI using PySide6 only."""
 from __future__ import annotations
 
-import queue
 import threading
 import webbrowser
 
-import customtkinter as ctk
 import requests
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from secure_settings import key_looks_plausible, load_gemini_api_key, save_gemini_api_key
 
 GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 AI_STUDIO_URL = "https://aistudio.google.com/apikey"
+_BOOTSTRAP_APP = None
 
 
 def test_gemini_api_key(key: str, timeout: float = 8.0):
@@ -19,199 +20,82 @@ def test_gemini_api_key(key: str, timeout: float = 8.0):
     if not key_looks_plausible(clean):
         return False, "A chave parece incompleta."
     try:
-        response = requests.get(
-            GEMINI_MODELS_URL,
-            headers={
-                "x-goog-api-key": clean,
-                "x-goog-api-client": "jarvis-desktop/1.0",
-                "Accept": "application/json",
-            },
-            timeout=timeout,
-        )
+        response = requests.get(GEMINI_MODELS_URL, headers={"x-goog-api-key": clean, "x-goog-api-client": "jarvis-desktop/1.0", "Accept": "application/json"}, timeout=timeout)
     except requests.RequestException:
-        return False, "Não consegui acessar o Gemini. Verifique sua internet."
+        return False, "Nao consegui acessar o Gemini. Verifique sua internet."
     if response.status_code == 200:
         return True, "Chave validada com sucesso."
     if response.status_code in (400, 401, 403):
         return False, "O Gemini recusou essa chave. Confira a chave no Google AI Studio."
     if response.status_code == 429:
-        # Authentication succeeded far enough to reach quota/rate limiting.
-        return True, "Chave reconhecida; a conta está com limite temporário de uso."
-    return False, f"O Gemini respondeu com código {response.status_code}. Tente novamente."
+        return True, "Chave reconhecida; a conta esta com limite temporario de uso."
+    return False, f"O Gemini respondeu com codigo {response.status_code}. Tente novamente."
+
+
+class _TestSignals(QObject):
+    done = Signal(bool, str)
+
+
+def _ensure_app() -> QApplication:
+    global _BOOTSTRAP_APP
+    app = QApplication.instance()
+    if app is None:
+        _BOOTSTRAP_APP = QApplication([])
+        app = _BOOTSTRAP_APP
+    return app
 
 
 def show_api_key_dialog(parent=None, first_run: bool = False) -> bool:
-    """Show a modal API-key dialog. Returns True when a key was saved."""
-    owns_root = parent is None
-    window = ctk.CTk() if owns_root else ctk.CTkToplevel(parent)
-    window.title("JARVIS Desktop - Configurar Gemini")
-    window.geometry("590x430")
-    window.resizable(False, False)
-    window.configure(fg_color="#17181C")
-    try:
-        window.iconbitmap("jarvis.ico")
-    except Exception:
-        pass
-    # O dialogo pode ser aberto pelo instalador; trazemos a janela para frente
-    # para que ela nao fique escondida atras do Setup ou de outra janela.
-    try:
-        window.attributes("-topmost", True)
-        window.lift()
-        window.focus_force()
-        window.after(900, lambda: window.attributes("-topmost", False))
-    except Exception:
-        pass
-
+    _ensure_app()
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("JARVIS Desktop - Configurar Gemini")
+    dialog.setFixedSize(590, 430)
+    dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+    dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    dialog.setStyleSheet("QDialog{background:#17181c;color:#f5f7ff;}QLabel{color:#c8cdd6;font:12px 'Segoe UI';}QLabel#title{color:#f5f7ff;font:800 22px 'Segoe UI';}QLabel#subtitle{color:#a9afbc;font:14px 'Segoe UI';}QLineEdit{height:42px;background:#22242a;border:1px solid #3c414b;border-radius:8px;color:#f5f6f8;padding:0 12px;font:13px 'Segoe UI';}QPushButton{height:38px;background:#30343d;border:1px solid #404651;border-radius:8px;color:#f5f7ff;padding:0 14px;font:600 12px 'Segoe UI';}QPushButton:hover{background:#3c424e;}QPushButton#save{background:#5f91ff;color:#10131a;border-color:#5f91ff;}")
     result = {"saved": False}
-    test_results = queue.Queue()
-
-    if not owns_root:
-        try:
-            window.transient(parent)
-            window.grab_set()
-        except Exception:
-            pass
-
-    shell = ctk.CTkFrame(window, fg_color="#17181C", corner_radius=0)
-    shell.pack(fill="both", expand=True, padx=30, pady=26)
-
-    ctk.CTkLabel(
-        shell,
-        text="JARVIS DESKTOP",
-        font=ctk.CTkFont(family="Bahnschrift", size=22, weight="bold"),
-        text_color="#F5F7FF",
-    ).pack(anchor="w")
-    ctk.CTkLabel(
-        shell,
-        text="Conecte sua própria chave do Google Gemini",
-        font=ctk.CTkFont(size=14),
-        text_color="#A9AFBC",
-    ).pack(anchor="w", pady=(3, 20))
-
-    info = (
-        "A chave fica protegida pelo Windows para este usuário e não é enviada ao GitHub, "
-        "ao instalador ou a outros usuários do JARVIS."
-    )
-    ctk.CTkLabel(
-        shell, text=info, justify="left", wraplength=520,
-        font=ctk.CTkFont(size=12), text_color="#C8CDD6",
-    ).pack(anchor="w", pady=(0, 14))
-
-    entry = ctk.CTkEntry(
-        shell,
-        height=44,
-        show="•",
-        placeholder_text="Cole aqui sua API key do Gemini",
-        fg_color="#22242A",
-        border_color="#3C414B",
-        text_color="#F5F6F8",
-    )
-    entry.pack(fill="x")
+    signals = _TestSignals(dialog)
+    root = QVBoxLayout(dialog)
+    root.setContentsMargins(30, 26, 30, 24)
+    root.setSpacing(10)
+    title = QLabel("JARVIS DESKTOP"); title.setObjectName("title")
+    subtitle = QLabel("Conecte sua propria chave do Google Gemini"); subtitle.setObjectName("subtitle")
+    root.addWidget(title); root.addWidget(subtitle); root.addSpacing(8)
+    info = QLabel("A chave fica protegida pelo Windows para este usuario e nao e enviada ao GitHub, ao instalador ou a outros usuarios do JARVIS.")
+    info.setWordWrap(True); root.addWidget(info); root.addSpacing(4)
+    entry = QLineEdit(); entry.setEchoMode(QLineEdit.EchoMode.Password); entry.setPlaceholderText("Cole aqui sua API key do Gemini")
     existing = load_gemini_api_key()
-    if existing:
-        entry.insert(0, existing)
-
-    status = ctk.CTkLabel(
-        shell, text="", anchor="w", justify="left",
-        font=ctk.CTkFont(size=11), text_color="#A9AFBC",
-    )
-    status.pack(fill="x", pady=(10, 6))
-
-    buttons = ctk.CTkFrame(shell, fg_color="transparent")
-    buttons.pack(fill="x", pady=(10, 0))
-
-    test_button = ctk.CTkButton(
-        buttons, text="Testar chave", width=120, height=38,
-        fg_color="#30343D", hover_color="#3C424E",
-    )
-    test_button.pack(side="left")
-
-    ctk.CTkButton(
-        buttons, text="Criar/ver chave", width=120, height=38,
-        fg_color="transparent", border_width=1, border_color="#404651",
-        hover_color="#292D34",
-        command=lambda: webbrowser.open(AI_STUDIO_URL),
-    ).pack(side="left", padx=8)
-
-    save_button = ctk.CTkButton(
-        buttons, text="Salvar e continuar", width=150, height=38,
-        fg_color="#5F91FF", hover_color="#78A3FF", text_color="#10131A",
-    )
-    save_button.pack(side="right")
-
+    if existing: entry.setText(existing)
+    root.addWidget(entry)
+    status = QLabel(""); status.setWordWrap(True); root.addWidget(status); root.addStretch(1)
+    row = QHBoxLayout(); test_button = QPushButton("Testar chave"); create_button = QPushButton("Criar/ver chave"); save_button = QPushButton("Salvar e continuar"); save_button.setObjectName("save")
+    row.addWidget(test_button); row.addWidget(create_button); row.addStretch(1); row.addWidget(save_button); root.addLayout(row)
     if first_run:
-        ctk.CTkButton(
-            shell, text="Configurar depois", height=30,
-            fg_color="transparent", hover_color="#25282E", text_color="#8D94A0",
-            command=window.destroy,
-        ).pack(anchor="e", pady=(14, 0))
-
+        later = QPushButton("Configurar depois"); later.clicked.connect(dialog.reject); root.addWidget(later, 0, Qt.AlignmentFlag.AlignRight)
     def set_busy(busy: bool):
-        state = "disabled" if busy else "normal"
-        try:
-            test_button.configure(state=state)
-            save_button.configure(state=state)
-        except Exception:
-            pass
-
-    def poll_test_results():
-        try:
-            ok, message = test_results.get_nowait()
-        except queue.Empty:
-            try:
-                window.after(100, poll_test_results)
-            except Exception:
-                pass
-            return
-        set_busy(False)
-        status.configure(text=message, text_color="#69E3B1" if ok else "#FF8B8B")
-
+        test_button.setEnabled(not busy); save_button.setEnabled(not busy)
+    def test_done(ok: bool, message: str):
+        set_busy(False); status.setText(message); status.setStyleSheet(f"color:{'#69e3b1' if ok else '#ff8b8b'};")
+    signals.done.connect(test_done)
     def do_test():
-        key = entry.get().strip()
-        if not key_looks_plausible(key):
-            status.configure(text="A chave parece incompleta.", text_color="#FF8B8B")
-            return
-        set_busy(True)
-        status.configure(text="Testando conexão com o Gemini...", text_color="#A9AFBC")
-        threading.Thread(
-            target=lambda: test_results.put(test_gemini_api_key(key)),
-            name="JARVIS-GEMINI-KEY-TEST",
-            daemon=True,
-        ).start()
-        window.after(100, poll_test_results)
-
+        key = entry.text().strip()
+        if not key_looks_plausible(key): test_done(False, "A chave parece incompleta."); return
+        set_busy(True); status.setText("Testando conexao com o Gemini..."); status.setStyleSheet("color:#a9afbc;")
+        def worker():
+            ok, message = test_gemini_api_key(key); signals.done.emit(bool(ok), str(message))
+        threading.Thread(target=worker, name="JARVIS-GEMINI-KEY-TEST", daemon=True).start()
     def do_save():
-        key = entry.get().strip()
-        try:
-            save_gemini_api_key(key)
-        except ValueError as exc:
-            status.configure(text=str(exc), text_color="#FF8B8B")
-            return
-        except Exception:
-            status.configure(text="Não consegui proteger a chave no Windows.", text_color="#FF8B8B")
-            return
-        result["saved"] = True
-        window.destroy()
-
-    test_button.configure(command=do_test)
-    save_button.configure(command=do_save)
-    entry.bind("<Return>", lambda _event: do_save())
-    window.protocol("WM_DELETE_WINDOW", window.destroy)
-    try:
-        entry.focus_set()
-    except Exception:
-        pass
-
-    if owns_root:
-        window.mainloop()
-    else:
-        parent.wait_window(window)
+        key = entry.text().strip()
+        try: save_gemini_api_key(key)
+        except ValueError as exc: test_done(False, str(exc)); return
+        except Exception: test_done(False, "Nao consegui proteger a chave no Windows."); return
+        result["saved"] = True; dialog.accept()
+    test_button.clicked.connect(do_test); create_button.clicked.connect(lambda: webbrowser.open(AI_STUDIO_URL)); save_button.clicked.connect(do_save); entry.returnPressed.connect(do_save); entry.setFocus(); dialog.exec()
     return bool(result["saved"])
 
 
 def ensure_gemini_configured() -> bool:
-    if load_gemini_api_key():
-        return True
+    if load_gemini_api_key(): return True
     return show_api_key_dialog(first_run=True)
 
 

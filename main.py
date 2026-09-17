@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""JARVIS Desktop entry point.
-
-Diagnostic build: preserves normal startup behavior but records detailed
-startup phases and full tracebacks when the frozen executable closes early.
-"""
+"""JARVIS Desktop entry point for the single-source Qt UI."""
 from __future__ import annotations
 
 import ctypes
@@ -15,12 +11,10 @@ from pathlib import Path
 
 _MAIN_MUTEX_HANDLE = None
 _MAIN_MUTEX_NAME = r"Local\JARVISDesktop.MainInstance"
-_OVERLAY_CHILD_SWITCH = "--voice-overlay-child"
 _CONFIGURE_API_SWITCH = "--configure-api"
 _ENSURE_API_SWITCH = "--ensure-api"
 _RESTART_AFTER_PID_SWITCH = "--restart-after-pid"
 _RUNTIME_SELFTEST_SWITCH = "--runtime-selftest"
-
 _STARTUP_PHASE = "module-load"
 
 
@@ -41,24 +35,23 @@ def _diagnostic_log_path() -> Path:
 
 
 def _write_startup_diagnostic(message: object, *, exc: BaseException | None = None) -> None:
-    """Best-effort crash logger for failures that happen before/inside the GUI loop."""
     try:
         path = _diagnostic_log_path()
         with path.open("a", encoding="utf-8", errors="replace") as handle:
             handle.write("\n" + "=" * 72 + "\n")
             handle.write("JARVIS DESKTOP - STARTUP DIAGNOSTIC\n")
             handle.write("=" * 72 + "\n")
-            handle.write(f"Data/Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            handle.write(f"Fase: {_STARTUP_PHASE}\n")
+            handle.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            handle.write(f"Phase: {_STARTUP_PHASE}\n")
             handle.write(f"PID: {os.getpid()}\n")
             handle.write(f"Frozen: {bool(getattr(sys, 'frozen', False))}\n")
-            handle.write(f"Executavel: {sys.executable}\n")
+            handle.write(f"Executable: {sys.executable}\n")
             handle.write(f"App dir: {_app_dir()}\n")
             handle.write(f"CWD: {Path.cwd()}\n")
             handle.write(f"argv: {sys.argv!r}\n")
-            handle.write(f"Mensagem: {message}\n")
+            handle.write(f"Message: {message}\n")
             if exc is not None:
-                handle.write(f"Tipo: {type(exc).__name__}\n")
+                handle.write(f"Type: {type(exc).__name__}\n")
                 handle.write("Traceback:\n")
                 handle.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
             handle.write("\n")
@@ -70,11 +63,48 @@ def _set_phase(name: str) -> None:
     global _STARTUP_PHASE
     _STARTUP_PHASE = str(name)
     try:
-        path = _diagnostic_log_path()
-        with path.open("a", encoding="utf-8", errors="replace") as handle:
+        with _diagnostic_log_path().open("a", encoding="utf-8", errors="replace") as handle:
             handle.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] PHASE: {_STARTUP_PHASE}\n")
     except Exception:
         pass
+
+
+def _write_critical_error(message: object) -> None:
+    base = _app_dir()
+    try:
+        from secure_settings import settings_dir
+        error_dir = settings_dir() / "logs"
+    except Exception:
+        error_dir = base / "logs"
+    try:
+        error_dir.mkdir(parents=True, exist_ok=True)
+        path = error_dir / "ERRO_CRITICO.txt"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write("JARVIS DESKTOP - CRITICAL ERROR\n")
+            handle.write("=" * 50 + "\n")
+            handle.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            handle.write(f"System: {sys.platform}\n")
+            handle.write(f"Application: {base}\n")
+            handle.write(f"Error: {message}\n\n")
+    except Exception:
+        pass
+
+
+def _prepare_process_environment(base: Path) -> None:
+    os.chdir(base)
+    base_text = str(base)
+    if base_text not in sys.path:
+        sys.path.insert(0, base_text)
+    if getattr(sys, "frozen", False):
+        try:
+            if sys.stdout is None:
+                sys.stdout = open(os.devnull, "w", encoding="utf-8", errors="replace")
+            if sys.stderr is None:
+                sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    if os.name == "nt":
+        os.environ.setdefault("PYSTRAY_BACKEND", "win32")
 
 
 def _pop_switch_value(name: str) -> str:
@@ -136,70 +166,71 @@ def _activate_runtime(base: Path, *, track_boot: bool):
         from hot_update_runtime import activate_hot_runtime
         return activate_hot_runtime(base, track_boot=track_boot)
     except Exception as exc:
-        _write_critical_error(f"Hot runtime ignorado: {exc}")
-        _write_startup_diagnostic("Falha ao ativar hot runtime; usando bundle.", exc=exc)
+        _write_critical_error(f"Hot runtime ignored: {exc}")
+        _write_startup_diagnostic("Hot runtime activation failed; using bundle.", exc=exc)
         return None
 
 
 def _run_runtime_selftest(base: Path) -> None:
     report_path = _pop_switch_value(_RUNTIME_SELFTEST_SWITCH)
-    if report_path:
-        target = Path(report_path)
-        if not target.is_absolute():
-            target = (base / target).resolve()
-    else:
-        target = base / "runtime_selftest.json"
+    target = Path(report_path) if report_path else base / "runtime_selftest.json"
+    if not target.is_absolute():
+        target = (base / target).resolve()
 
     checks = {}
     failures = []
 
-    def _report_value(value):
-        if value is None:
-            return True
-        try:
-            __import__("json").dumps(value, ensure_ascii=False)
-        except (TypeError, ValueError, OverflowError):
-            return True
-        return value
-
     def probe(name, func):
         try:
             value = func()
-            checks[name] = _report_value(value)
+            checks[name] = True if value is None else value
         except Exception as exc:
             checks[name] = False
             failures.append(f"{name}: {type(exc).__name__}: {exc}")
 
     _prepare_process_environment(base)
     os.environ["JARVIS_APP_DIR"] = str(base)
-    probe("customtkinter", lambda: __import__("customtkinter"))
+    probe("pyside6", lambda: __import__("PySide6"))
     probe("sounddevice", lambda: __import__("sounddevice"))
     probe("vosk", lambda: __import__("vosk"))
     probe("webrtcvad", lambda: __import__("webrtcvad"))
     probe("_webrtcvad", lambda: __import__("_webrtcvad"))
     probe("pystray", lambda: __import__("pystray"))
     probe("pystray_win32", lambda: __import__("pystray._win32", fromlist=["*"]))
-    probe("pyside6", lambda: __import__("PySide6"))
     probe("voice_engine", lambda: __import__("voice_engine"))
     probe("desktop_integration", lambda: __import__("desktop_integration"))
-    probe("overlay", lambda: __import__("voice_overlay_qt"))
     probe("send2trash", lambda: __import__("send2trash"))
+
+    def prove_single_qt_ui():
+        import gui
+        paths = gui.required_asset_paths()
+        forbidden = [name for name in gui.FORBIDDEN_VISUAL_MODULES if name in sys.modules]
+        if forbidden:
+            raise RuntimeError("Legacy visual modules loaded: " + ", ".join(forbidden))
+        return {"module": str(Path(gui.__file__).name), "assets": sorted(paths)}
+
+    probe("single_qt_ui", prove_single_qt_ui)
+
+    model = base / "data" / "voice_models" / "vosk-model-small-pt-0.3"
+    required_model_files = [model / "final.mdl", model / "Gr.fst", model / "HCLr.fst", model / "phones.txt", model / "mfcc.conf"]
+    missing = [str(path.relative_to(base)) for path in required_model_files if not path.is_file()]
+    checks["wake_model_assets"] = not missing
+    if missing:
+        failures.append("wake_model_assets missing: " + ", ".join(missing))
 
     expected_hot = str(os.environ.get("JARVIS_EXPECT_HOT_VERSION") or "").strip()
     if expected_hot:
         activation_box = {"value": None}
-
         def activate_hot_for_probe():
             activation = _activate_runtime(base, track_boot=False)
             activation_box["value"] = activation
             if activation is None or str(getattr(activation, "version", "")) != expected_hot:
-                raise RuntimeError(f"hot runtime esperado {expected_hot} não foi ativado")
+                raise RuntimeError(f"Expected hot runtime {expected_hot} was not activated")
             return str(getattr(activation, "path", ""))
-
         def prove_hot_import_precedence():
             activation = activation_box.get("value")
             if activation is None:
-                raise RuntimeError("hot runtime não foi ativado")
+                raise RuntimeError("Hot runtime was not activated")
             import importlib
             sys.modules.pop("jarvis_version", None)
             module = importlib.import_module("jarvis_version")
@@ -207,100 +238,27 @@ def _run_runtime_selftest(base: Path) -> None:
             origin = Path(str(getattr(module, "__file__", "") or "")).resolve()
             runtime_path = Path(str(getattr(activation, "path", ""))).resolve()
             if actual != expected_hot:
-                raise RuntimeError(f"import usou versão {actual or 'desconhecida'}, esperada {expected_hot}")
+                raise RuntimeError(f"Version {actual or 'unknown'} != {expected_hot}")
             try:
                 origin.relative_to(runtime_path)
             except Exception as exc:
-                raise RuntimeError(f"jarvis_version veio do bundle, não do hot runtime: {origin}") from exc
+                raise RuntimeError(f"jarvis_version came from bundle: {origin}") from exc
             return {"version": actual, "origin": str(origin)}
-
         probe("hot_runtime_activation", activate_hot_for_probe)
         probe("hot_runtime_import_precedence", prove_hot_import_precedence)
 
-    model = base / "data" / "voice_models" / "vosk-model-small-pt-0.3"
-    required_model_files = [
-        model / "final.mdl",
-        model / "Gr.fst",
-        model / "HCLr.fst",
-        model / "phones.txt",
-        model / "mfcc.conf",
-    ]
-    missing = [str(path.relative_to(base)) for path in required_model_files if not path.is_file()]
-    checks["wake_model_assets"] = not missing
-    if missing:
-        failures.append("wake_model_assets ausentes: " + ", ".join(missing))
-
-    payload = {
-        "ok": not failures,
-        "frozen": bool(getattr(sys, "frozen", False)),
-        "app_dir": str(base),
-        "checks": checks,
-        "failures": failures,
-    }
+    payload = {"ok": not failures, "frozen": bool(getattr(sys, "frozen", False)), "app_dir": str(base), "checks": checks, "failures": failures}
     try:
+        import json
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            __import__("json").dumps(payload, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     except Exception as exc:
-        _write_critical_error(f"Runtime selftest não conseguiu gravar relatório: {exc}")
+        _write_critical_error(f"Runtime selftest report failed: {exc}")
         raise SystemExit(4)
     if failures:
-        _write_critical_error("Runtime selftest falhou: " + " | ".join(failures))
+        _write_critical_error("Runtime selftest failed: " + " | ".join(failures))
         raise SystemExit(3)
     raise SystemExit(0)
-
-
-def _write_critical_error(message: object) -> None:
-    base = _app_dir()
-    try:
-        from secure_settings import settings_dir
-        error_dir = settings_dir() / "logs"
-    except Exception:
-        error_dir = base / "logs"
-    try:
-        error_dir.mkdir(parents=True, exist_ok=True)
-        path = error_dir / "ERRO_CRITICO.txt"
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write("JARVIS DESKTOP - ERRO CRITICO\n")
-            handle.write("=" * 50 + "\n")
-            handle.write(f"Data/Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            handle.write(f"Sistema: {sys.platform}\n")
-            handle.write(f"Aplicativo: {base}\n")
-            handle.write(f"Erro: {message}\n\n")
-    except Exception:
-        pass
-
-
-def _prepare_process_environment(base: Path) -> None:
-    os.chdir(base)
-    base_text = str(base)
-    if base_text not in sys.path:
-        sys.path.insert(0, base_text)
-    if getattr(sys, "frozen", False):
-        try:
-            if sys.stdout is None:
-                sys.stdout = open(os.devnull, "w", encoding="utf-8", errors="replace")
-            if sys.stderr is None:
-                sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")
-        except Exception:
-            pass
-    if os.name == "nt":
-        os.environ.setdefault("PYSTRAY_BACKEND", "win32")
-
-
-def _run_overlay_child(base: Path) -> None:
-    _prepare_process_environment(base)
-    try:
-        from voice_overlay_qt import _run_child
-        _run_child()
-    except SystemExit:
-        raise
-    except Exception as exc:
-        _write_critical_error(f"Overlay Qt filho: {exc}")
-        _write_startup_diagnostic("Falha no processo filho do overlay.", exc=exc)
-        raise SystemExit(2)
 
 
 def _acquire_main_instance() -> bool:
@@ -322,49 +280,43 @@ def _acquire_main_instance() -> bool:
         error = ctypes.get_last_error()
         if error == 183:
             close_handle(handle)
-            _write_startup_diagnostic("Outra instância do JARVIS já possui o mutex principal.")
+            _write_startup_diagnostic("Another JARVIS instance already owns the main mutex.")
             return False
         _MAIN_MUTEX_HANDLE = handle
         return True
     except Exception as exc:
-        _write_critical_error(f"Trava de instancia unica indisponivel: {exc}")
-        _write_startup_diagnostic("Falha ao criar mutex; inicialização continuará.", exc=exc)
+        _write_critical_error(f"Single-instance mutex unavailable: {exc}")
         return True
 
 
 def _bootstrap_configuration(base: Path) -> None:
     _prepare_process_environment(base)
     from secure_settings import bootstrap_secrets_to_env, migrate_legacy_env
-
     try:
         migrate_legacy_env(base)
     except Exception:
         pass
-
     key = bootstrap_secrets_to_env()
     configure_only = _CONFIGURE_API_SWITCH in sys.argv
     ensure_only = _ENSURE_API_SWITCH in sys.argv
     skip_first_run = "--no-first-run" in sys.argv
-
     if configure_only:
         try:
             from first_run_setup import show_api_key_dialog
             show_api_key_dialog(first_run=False)
         except Exception as exc:
-            _write_critical_error(f"Falha ao abrir configuracao Gemini: {exc}")
-            _write_startup_diagnostic("Falha no diálogo de configuração Gemini.", exc=exc)
+            _write_critical_error(f"Gemini config dialog failed: {exc}")
+            _write_startup_diagnostic("Gemini configuration dialog failed.", exc=exc)
         bootstrap_secrets_to_env()
         raise SystemExit(0)
-
     if (not key) and (ensure_only or not skip_first_run):
         try:
             from first_run_setup import show_api_key_dialog
             show_api_key_dialog(first_run=not ensure_only)
         except Exception as exc:
-            _write_critical_error(f"Falha ao abrir configuracao Gemini: {exc}")
-            _write_startup_diagnostic("Falha no primeiro diálogo de configuração.", exc=exc)
+            _write_critical_error(f"First-run Gemini dialog failed: {exc}")
+            _write_startup_diagnostic("First-run configuration dialog failed.", exc=exc)
         bootstrap_secrets_to_env()
-
     if ensure_only:
         raise SystemExit(0)
 
@@ -374,28 +326,17 @@ def main() -> None:
     _set_phase("prepare-environment")
     _prepare_process_environment(base)
     os.environ["JARVIS_APP_DIR"] = str(base)
-
     if _RUNTIME_SELFTEST_SWITCH in sys.argv:
         _set_phase("runtime-selftest")
         _run_runtime_selftest(base)
         return
-
     _set_phase("wait-restart-parent")
     _wait_for_restart_parent()
-
-    if _OVERLAY_CHILD_SWITCH in sys.argv:
-        _set_phase("overlay-child-activate-runtime")
-        _activate_runtime(base, track_boot=False)
-        _set_phase("overlay-child-run")
-        _run_overlay_child(base)
-        return
-
     try:
         import multiprocessing
         multiprocessing.freeze_support()
     except Exception:
         pass
-
     helper_mode = _CONFIGURE_API_SWITCH in sys.argv or _ENSURE_API_SWITCH in sys.argv
     if helper_mode:
         _set_phase("helper-activate-runtime")
@@ -406,7 +347,6 @@ def main() -> None:
             return
         _set_phase("activate-runtime")
         _activate_runtime(base, track_boot=True)
-
     try:
         _set_phase("bootstrap-configuration")
         _bootstrap_configuration(base)
@@ -414,11 +354,8 @@ def main() -> None:
         raise
     except Exception as exc:
         _write_critical_error(f"Bootstrap: {exc}")
-        _write_startup_diagnostic("Exceção durante bootstrap de configuração.", exc=exc)
-
+        _write_startup_diagnostic("Configuration bootstrap failed.", exc=exc)
     try:
-        _set_phase("import-customtkinter")
-        import customtkinter as ctk
         _set_phase("import-actions")
         from actions import SystemActions
         _set_phase("import-core")
@@ -428,69 +365,40 @@ def main() -> None:
         _set_phase("import-logger")
         from logger import JarvisLogger
     except Exception as exc:
-        _write_critical_error(f"Importacao: {exc}")
-        _write_startup_diagnostic("Falha importando módulos principais.", exc=exc)
+        _write_critical_error(f"Import failure: {exc}")
+        _write_startup_diagnostic("Main module import failed.", exc=exc)
         if not getattr(sys, "frozen", False):
-            print(f"Erro ao importar modulos: {exc}")
+            print(f"Import error: {exc}")
         raise SystemExit(1)
-
     try:
-        _set_phase("ctk-theme")
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("blue")
-
         _set_phase("create-logger")
         logger = JarvisLogger()
-
         _set_phase("create-actions")
         actions = SystemActions(logger)
-
         _set_phase("create-core")
         core = JarvisCore(logger)
-
         _set_phase("create-gui")
         app = JarvisGUI(logger, actions, core)
-
-        # Do NOT mark the hot runtime healthy before the GUI loop has actually
-        # proven it can start. Schedule the health mark for the first Tk event
-        # whenever the GUI exposes the underlying root/window.
         _set_phase("schedule-runtime-healthy")
         try:
+            from PySide6.QtCore import QTimer
             from hot_update_runtime import mark_hot_runtime_healthy
-
-            scheduled = False
-            for candidate_name in ("root", "window", "app"):
-                candidate = getattr(app, candidate_name, None)
-                if candidate is not None and hasattr(candidate, "after"):
-                    candidate.after(1500, mark_hot_runtime_healthy)
-                    scheduled = True
-                    break
-            if not scheduled:
-                # Safer fallback: leave runtime unmarked rather than declaring
-                # it healthy before app.run() has started.
-                _write_startup_diagnostic(
-                    "GUI criada, mas não foi possível agendar mark_hot_runtime_healthy via after()."
-                )
+            QTimer.singleShot(1500, mark_hot_runtime_healthy)
         except Exception as exc:
-            _write_startup_diagnostic("Não foi possível agendar confirmação do hot runtime.", exc=exc)
-
+            _write_startup_diagnostic("Could not schedule hot runtime health mark.", exc=exc)
         _set_phase("app-run")
         app.run()
-
         _set_phase("app-run-returned")
-        _write_startup_diagnostic(
-            "app.run() retornou normalmente. Se o usuário não pediu para sair, "
-            "investigue encerramento da GUI/tray."
-        )
+        _write_startup_diagnostic("app.run() returned normally.")
     except KeyboardInterrupt:
         raise SystemExit(0)
     except SystemExit:
         raise
     except BaseException as exc:
-        _write_critical_error(f"Inicializacao: {type(exc).__name__}: {exc}")
-        _write_startup_diagnostic("Falha fatal durante inicialização/execução da GUI.", exc=exc)
+        _write_critical_error(f"Startup: {type(exc).__name__}: {exc}")
+        _write_startup_diagnostic("Fatal GUI startup/runtime failure.", exc=exc)
         try:
-            print(f"Erro fatal na inicializacao: {exc}")
+            print(f"Fatal startup error: {exc}")
         except Exception:
             pass
         raise SystemExit(1)
@@ -503,5 +411,5 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except BaseException as exc:
-        _write_startup_diagnostic("Exceção não tratada escapou de main().", exc=exc)
+        _write_startup_diagnostic("Unhandled exception escaped main().", exc=exc)
         raise

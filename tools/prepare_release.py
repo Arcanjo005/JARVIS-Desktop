@@ -1,131 +1,49 @@
 #!/usr/bin/env python3
-"""Prepare deterministic Desktop build metadata before PyInstaller runs."""
+"""Prepare deterministic JARVIS build metadata without changing the UI route."""
 from __future__ import annotations
-
-import argparse
-import json
-import re
-import shutil
-import sys
-from datetime import datetime, timezone
+import argparse,json,re,sys
+from datetime import datetime,timezone
 from pathlib import Path
-
 from packaging.version import Version
+ROOT=Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path: sys.path.insert(0,str(ROOT))
+REQUIRED_UI_ASSETS=("workspace_bg.jpg","sphere_3d.png","update_neon_arrow.png","jarvis_logo.png","plus.png","mic.png","send.png")
 
-ROOT = Path(__file__).resolve().parents[1]
-ROOT_STR = str(ROOT)
-if ROOT_STR not in sys.path:
-    sys.path.insert(0, ROOT_STR)
-
-
-def replace_assignment(text: str, name: str, value: str) -> str:
-    pattern = rf'(?m)^{re.escape(name)}\s*=\s*["\'][^"\']*["\']\s*$'
-    replacement = f'{name} = {json.dumps(value)}'
-    updated, count = re.subn(pattern, replacement, text, count=1)
-    if count != 1:
-        raise RuntimeError(f"Não encontrei {name} em jarvis_version.py")
+def replace_assignment(text,name,value):
+    pattern=rf'(?m)^{re.escape(name)}\s*=\s*["\'][^"\']*["\']\s*$'; updated,count=re.subn(pattern,f'{name} = {json.dumps(value)}',text,count=1)
+    if count!=1: raise RuntimeError(f"Could not find {name} in jarvis_version.py")
     return updated
 
-
-def parse_numeric_version(version: str):
-    parsed = Version(version)
-    release = list(parsed.release[:4])
-    while len(release) < 4:
-        release.append(0)
+def parse_numeric_version(version):
+    release=list(Version(version).release[:4])
+    while len(release)<4: release.append(0)
     return tuple(int(x) for x in release)
 
+def write_version_resource(version):
+    v=parse_numeric_version(version); dotted=".".join(str(x) for x in v)
+    content=f'''# UTF-8\nVSVersionInfo(\n  ffi=FixedFileInfo(filevers={v},prodvers={v},mask=0x3f,flags=0x0,OS=0x40004,fileType=0x1,subtype=0x0,date=(0,0)),\n  kids=[StringFileInfo([StringTable('040904B0',[StringStruct('CompanyName','JARVIS Desktop'),StringStruct('FileDescription','JARVIS Desktop AI Assistant'),StringStruct('FileVersion','{dotted}'),StringStruct('InternalName','JARVIS'),StringStruct('LegalCopyright','JARVIS Desktop'),StringStruct('OriginalFilename','JARVIS.exe'),StringStruct('ProductName','JARVIS Desktop'),StringStruct('ProductVersion','{version}')])]),VarFileInfo([VarStruct('Translation',[1033,1200])])]\n)\n'''
+    (ROOT/"build"/"version_info.txt").write_text(content,encoding="utf-8")
 
-def write_version_resource(version: str):
-    v = parse_numeric_version(version)
-    dotted = ".".join(str(x) for x in v)
-    content = f'''# UTF-8\nVSVersionInfo(\n  ffi=FixedFileInfo(\n    filevers={v},\n    prodvers={v},\n    mask=0x3f,\n    flags=0x0,\n    OS=0x40004,\n    fileType=0x1,\n    subtype=0x0,\n    date=(0, 0)\n  ),\n  kids=[\n    StringFileInfo([\n      StringTable('040904B0', [\n        StringStruct('CompanyName', 'JARVIS Desktop'),\n        StringStruct('FileDescription', 'JARVIS Desktop AI Assistant'),\n        StringStruct('FileVersion', '{dotted}'),\n        StringStruct('InternalName', 'JARVIS'),\n        StringStruct('LegalCopyright', 'JARVIS Desktop'),\n        StringStruct('OriginalFilename', 'JARVIS.exe'),\n        StringStruct('ProductName', 'JARVIS Desktop'),\n        StringStruct('ProductVersion', '{version}')\n      ])\n    ]),\n    VarFileInfo([VarStruct('Translation', [1033, 1200])])\n  ]\n)\n'''
-    (ROOT / "build" / "version_info.txt").write_text(content, encoding="utf-8")
+def validate_single_source_ui():
+    main=(ROOT/"main.py").read_text(encoding="utf-8"); gui=(ROOT/"gui.py").read_text(encoding="utf-8")
+    if "from gui import JarvisGUI" not in main: raise RuntimeError("main.py is not using the single-source gui.py")
+    forbidden=("from gui_qt_","from gui_reference","JARVIS DESKTOP INTELLIGENCE","_paint_hologram","QRadialGradient")
+    hits=[token for token in forbidden if token in gui]
+    if hits: raise RuntimeError("Legacy visual path detected in gui.py: "+", ".join(hits))
 
-
-def activate_conversation_shell():
-    """Use the approved 1.3.12 reference shell in release builds."""
-    final_shell = ROOT / "gui_reference_release_1312.py"
-    if not final_shell.is_file():
-        raise RuntimeError("gui_reference_release_1312.py ausente")
-
-    main_path = ROOT / "main.py"
-    text = main_path.read_text(encoding="utf-8")
-    candidates = (
-        "from gui import JarvisGUI",
-        "from gui_conversation_shell import JarvisGUI",
-        "from gui_reference_final_1311 import JarvisGUI",
-        "from gui_reference_final_1312 import JarvisGUI",
-    )
-    new = "from gui_reference_release_1312 import JarvisGUI"
-    if new in text:
-        return
-    for old in candidates:
-        if old in text:
-            main_path.write_text(text.replace(old, new, 1), encoding="utf-8")
-            return
-    raise RuntimeError("Import de JarvisGUI não encontrado em main.py")
-
-
-def prepare_reference_asset():
-    """Rebuild, verify and stage the approved scene in the already-bundled data dir."""
-    from jarvis_reference_asset import ensure_reference_scene
-
-    source = ensure_reference_scene(ROOT, validate=True)
-    staged = ROOT / "data" / "jarvis_reference_scene_1440p.jpg"
-    staged.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, staged)
-
-    # Validate the staged copy too.  build_windows.ps1 already bundles the whole
-    # data directory, so this avoids another fragile PyInstaller add-data path.
-    from PIL import Image
-    with Image.open(staged) as image:
-        if tuple(image.size) != (2560, 1440) or str(image.format or "").upper() != "JPEG":
-            raise RuntimeError(f"cena staged inválida: {image.size} / {image.format}")
-    print(f"Cena de referência validada e staged: {staged}")
-    return staged
-
+def validate_approved_assets():
+    assets=ROOT/"assets"; missing=[name for name in REQUIRED_UI_ASSETS if not (assets/name).is_file()]
+    if missing: raise RuntimeError("Approved UI assets missing: "+", ".join(missing))
+    invalid=[name for name in REQUIRED_UI_ASSETS if (assets/name).stat().st_size<128]
+    if invalid: raise RuntimeError("Approved UI assets invalid: "+", ".join(invalid))
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--version", required=True)
-    parser.add_argument("--repository", required=True)
-    parser.add_argument("--run-number", default="1")
-    args = parser.parse_args()
-
-    if not re.fullmatch(r"\d+\.\d+\.\d+", args.version.strip()):
-        raise SystemExit("version deve usar X.Y.Z, por exemplo 1.0.1")
-    version = str(Version(args.version))
-    repository = args.repository.strip().strip("/")
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
-        raise SystemExit("repository deve estar no formato OWNER/REPO")
-
-    # Fail early if the visual asset cannot be reconstructed exactly.  This
-    # prevents another release from silently falling back to the old scene.
-    prepare_reference_asset()
-
-    version_file = ROOT / "jarvis_version.py"
-    text = version_file.read_text(encoding="utf-8")
-    text = replace_assignment(text, "VERSION", version)
-    stamp = datetime.now(timezone.utc).strftime("%Y.%m.%d")
-    text = replace_assignment(text, "BUILD", f"{stamp}-desktop.{args.run_number}")
-    text = replace_assignment(text, "CHANNEL", "stable")
-    version_file.write_text(text, encoding="utf-8")
-
-    config_path = ROOT / "update_config.json"
-    config = json.loads(config_path.read_text(encoding="utf-8"))
-    config["repository"] = repository
-    config["enabled"] = True
-    config["hot_updates_enabled"] = True
-    config["hot_update_asset_prefix"] = str(config.get("hot_update_asset_prefix") or "JARVIS_HotUpdate_")
-    config["runtime_api"] = 1
-    config["bootstrap_version"] = version
-    config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-    activate_conversation_shell()
-    write_version_resource(version)
-    (ROOT / "RELEASE_VERSION.txt").write_text(version + "\n", encoding="utf-8")
-    print(f"JARVIS Desktop {version} preparado para {repository}")
-
-
-if __name__ == "__main__":
-    main()
+    p=argparse.ArgumentParser(); p.add_argument("--version",required=True); p.add_argument("--repository",required=True); p.add_argument("--run-number",default="1"); p.add_argument("--channel",default="stable",choices=("stable","beta","dev")); p.add_argument("--build-id",default=""); args=p.parse_args()
+    if not re.fullmatch(r"\d+\.\d+\.\d+",args.version.strip()): raise SystemExit("version must use X.Y.Z")
+    version=str(Version(args.version)); repository=args.repository.strip().strip("/")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",repository): raise SystemExit("repository must use OWNER/REPO")
+    validate_single_source_ui(); validate_approved_assets()
+    vf=ROOT/"jarvis_version.py"; text=vf.read_text(encoding="utf-8"); text=replace_assignment(text,"VERSION",version); build_id=args.build_id.strip() or f"{datetime.now(timezone.utc).strftime('%Y.%m.%d')}-desktop.{args.run_number}"; text=replace_assignment(text,"BUILD",build_id); text=replace_assignment(text,"CHANNEL",args.channel); vf.write_text(text,encoding="utf-8")
+    cp=ROOT/"update_config.json"; cfg=json.loads(cp.read_text(encoding="utf-8")); cfg.update(repository=repository,enabled=True,hot_updates_enabled=True,runtime_api=1,bootstrap_version=version); cfg["hot_update_asset_prefix"]=str(cfg.get("hot_update_asset_prefix") or "JARVIS_HotUpdate_"); cp.write_text(json.dumps(cfg,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+    write_version_resource(version); (ROOT/"RELEASE_VERSION.txt").write_text(version+"\n",encoding="utf-8"); print(f"JARVIS Desktop {version} / {build_id} / {args.channel} prepared for {repository}")
+if __name__=="__main__": main()
