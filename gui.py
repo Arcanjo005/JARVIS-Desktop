@@ -8,7 +8,7 @@ from github_updater import GitHubReleaseUpdater
 from jarvis_qt_bridge import JarvisQtBridge
 from jarvis_version import BUILD,CHANNEL,VERSION
 
-REQUIRED_UI_ASSETS=("workspace_bg.jpg","sphere_3d.png","update_neon_arrow.png","jarvis_logo.png","plus.png","mic.png","send.png")
+REQUIRED_UI_ASSETS=("workspace_bg.jpg","sphere_3d.webp")
 FORBIDDEN_VISUAL_MODULES=("gui_qt_dev","gui_qt_integrated","gui_qt_reference","gui_qt_reference_v2","gui_reference_exact","gui_reference_exact_v2","gui_reference_exact_v3","gui_reference_final_1311","gui_reference_final_1312","gui_reference_release_1312","jarvis_reference_orb","jarvis_reference_scene_139","jarvis_visual_runtime","voice_overlay_qt","jarvis_voice_overlay_139")
 
 def _root(): return Path(sys.executable).resolve().parent if getattr(sys,"frozen",False) else Path(__file__).resolve().parent
@@ -30,7 +30,7 @@ def _pix(name):
 
 class Scene(QWidget):
     def __init__(self):
-        super().__init__(); self.bg_src=_pix("workspace_bg.jpg"); self.orb_src=_pix("sphere_3d.png"); self.bg=QLabel(self); self.orb=QLabel(self)
+        super().__init__(); self.bg_src=_pix("workspace_bg.jpg"); self.orb_src=_pix("sphere_3d.webp"); self.bg=QLabel(self); self.orb=QLabel(self)
         self.bg.setObjectName("workspaceBackground"); self.orb.setObjectName("approvedSphere")
     def resizeEvent(self,e):
         super().resizeEvent(e)
@@ -48,8 +48,8 @@ class Composer(QFrame):
     submit=Signal(str); manual_voice=Signal()
     def __init__(self):
         super().__init__(); self.setObjectName("composer"); self.setFixedHeight(66); row=QHBoxLayout(self); row.setContentsMargins(8,7,8,7)
-        self.plus,self.mic,self.send=QPushButton(),QPushButton(),QPushButton(); self.editor=QTextEdit(); self.editor.setObjectName("composerEditor"); self.editor.setPlaceholderText("Mensagem para o JARVIS..."); self.editor.setAcceptRichText(False)
-        for b,n in ((self.plus,"plus.png"),(self.mic,"mic.png"),(self.send,"send.png")): b.setIcon(QIcon(str(asset_path(n)))); b.setIconSize(QSize(27,27)); b.setFixedSize(46,46); b.setObjectName("composerIconButton")
+        self.plus,self.mic,self.send=QPushButton("+"),QPushButton("●"),QPushButton("➤"); self.editor=QTextEdit(); self.editor.setObjectName("composerEditor"); self.editor.setPlaceholderText("Mensagem para o JARVIS..."); self.editor.setAcceptRichText(False)
+        for b in (self.plus,self.mic,self.send): b.setFixedSize(46,46); b.setObjectName("composerIconButton")
         row.addWidget(self.plus); row.addWidget(self.editor,1); row.addWidget(self.mic); row.addWidget(self.send); self.send.clicked.connect(self._send); self.mic.clicked.connect(self.manual_voice.emit); self.editor.installEventFilter(self)
     def eventFilter(self,o,e):
         if o is self.editor and e.type()==QEvent.Type.KeyPress and e.key() in (Qt.Key.Key_Return,Qt.Key.Key_Enter) and not e.modifiers()&Qt.KeyboardModifier.ShiftModifier: self._send(); return True
@@ -72,13 +72,13 @@ class JarvisGUI(QMainWindow):
     voice_state=Signal(str,str); voice_command=Signal(str); voice_caption=Signal(str); voice_live=Signal(str); voice_end=Signal(); update_ready=Signal(object); update_progress=Signal(int); update_error=Signal(str); update_done=Signal(str)
     def __init__(self,logger,actions,core):
         validate_approved_assets(); self.app=QApplication.instance() or QApplication(sys.argv); super().__init__(); self.logger=logger; self.actions=actions; self.core=core; self.project_dir=str(_root()); self.voice_engine=None; self._stream=""; self._bubble=None; self._update=None; self._pulse=False; self.bridge=JarvisQtBridge(core,logger,self)
-        self.setObjectName("jarvisWindow"); self.setWindowTitle(f"JARVIS Desktop {VERSION}"); self.resize(1380,850); self.setMinimumSize(1050,680); self._build(); self.setStyleSheet(self._css()); self._wire(); self.bridge.refresh_conversations(); self.bridge.load_active_conversation()
+        self.setObjectName("jarvisWindow"); self.setWindowTitle(f"JARVIS Desktop {VERSION}"); self.resize(1380,850); self.setMinimumSize(1050,680); self._build(); self.setStyleSheet(self._css()); self._wire(); self._status("ONLINE"); self.bridge.refresh_conversations(); self.bridge.load_active_conversation()
         if os.getenv("JARVIS_QT_DISABLE_AUTO_VOICE")!="1":QTimer.singleShot(2400,self._start_voice)
         if os.getenv("JARVIS_QT_DISABLE_AUTO_UPDATE")!="1":QTimer.singleShot(6000,self.check_update)
     def _build(self):
         root=QWidget(); self.setCentralWidget(root); stack=QStackedLayout(root); stack.setStackingMode(QStackedLayout.StackingMode.StackAll); self.scene=Scene(); stack.addWidget(self.scene); overlay=QWidget(); stack.addWidget(overlay); main=QHBoxLayout(overlay); main.setContentsMargins(0,0,0,0)
-        self.sidebar=QFrame(); self.sidebar.setObjectName("sidebar"); self.sidebar.setFixedWidth(310); side=QVBoxLayout(self.sidebar); brand=QHBoxLayout(); logo=QLabel(); logo.setPixmap(_pix("jarvis_logo.png").scaled(42,42,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation)); brand.addWidget(logo); brand.addWidget(QLabel("JARVIS")); brand.addStretch(); side.addLayout(brand); new=QPushButton("+  Nova conversa"); new.clicked.connect(self.bridge.new_conversation); side.addWidget(new); self.search=QLineEdit(); self.search.setPlaceholderText("Buscar conversas..."); side.addWidget(self.search); self.history=QListWidget(); self.history.setObjectName("history"); side.addWidget(self.history,1); side.addWidget(QLabel(f"v{VERSION} • {CHANNEL} • {BUILD}")); main.addWidget(self.sidebar)
-        stage=QWidget(); main.addWidget(stage,1); col=QVBoxLayout(stage); col.setContentsMargins(24,16,24,18); top=QHBoxLayout(); top.addStretch(); self.status=QLabel("ONLINE"); self.status.setObjectName("status"); top.addWidget(self.status); self.update_button=QPushButton(); self.update_button.setObjectName("updateButton"); self.update_button.setIcon(QIcon(str(asset_path("update_neon_arrow.png")))); self.update_button.setIconSize(QSize(24,24)); self.update_button.setFixedSize(44,44); top.addWidget(self.update_button); self.ring=Ring(); self.ring.hide(); top.addWidget(self.ring); col.addLayout(top); col.addStretch(2)
+        self.sidebar=QFrame(); self.sidebar.setObjectName("sidebar"); self.sidebar.setFixedWidth(310); side=QVBoxLayout(self.sidebar); brand=QHBoxLayout(); logo=QLabel("◈"); logo.setObjectName("brandMark"); logo.setAlignment(Qt.AlignmentFlag.AlignCenter); logo.setFixedSize(42,42); brand.addWidget(logo); brand.addWidget(QLabel("JARVIS")); brand.addStretch(); side.addLayout(brand); new=QPushButton("+  Nova conversa"); new.clicked.connect(self.bridge.new_conversation); side.addWidget(new); self.search=QLineEdit(); self.search.setPlaceholderText("Buscar conversas..."); side.addWidget(self.search); self.history=QListWidget(); self.history.setObjectName("history"); side.addWidget(self.history,1); side.addWidget(QLabel(f"v{VERSION} • {CHANNEL} • {BUILD}")); main.addWidget(self.sidebar)
+        stage=QWidget(); main.addWidget(stage,1); col=QVBoxLayout(stage); col.setContentsMargins(24,16,24,18); top=QHBoxLayout(); top.addStretch(); self.status=QLabel("ONLINE"); self.status.setObjectName("status"); top.addWidget(self.status); self.update_button=QPushButton("↑"); self.update_button.setObjectName("updateButton"); self.update_button.setFixedSize(44,44); top.addWidget(self.update_button); self.ring=Ring(); self.ring.hide(); top.addWidget(self.ring); col.addLayout(top); col.addStretch(2)
         self.caption=QLabel(); self.caption.setObjectName("caption"); self.caption.setAlignment(Qt.AlignmentFlag.AlignCenter); self.caption.setWordWrap(True); shadow=QGraphicsDropShadowEffect(self.caption); shadow.setBlurRadius(7); shadow.setOffset(0,2); shadow.setColor(QColor(0,0,0,245)); self.caption.setGraphicsEffect(shadow); self.caption.hide(); col.addWidget(self.caption)
         self.chat_frame=QFrame(); self.chat_frame.setObjectName("chatFrame"); self.chat_frame.setMinimumHeight(250); self.chat_frame.setMaximumHeight(390); chat=QVBoxLayout(self.chat_frame); self.scroll=QScrollArea(); self.scroll.setWidgetResizable(True); self.messages=QWidget(); self.msg=QVBoxLayout(self.messages); self.msg.addStretch(); self.scroll.setWidget(self.messages); chat.addWidget(self.scroll); col.addWidget(self.chat_frame); self.composer=Composer(); col.addWidget(self.composer)
     def _wire(self):
@@ -162,20 +162,25 @@ class JarvisGUI(QMainWindow):
         if not self._update:self.check_update();return
         self.pulse.stop();self.update_button.hide();self.ring.show();self.ring.setValue(0)
         def work():
-            try:self.update_done.emit(str(self._updater().download(self._update,progress=lambda d,t:self.update_progress.emit(int(d*100/max(1,t))))))
+            try:
+                info=self._update; updater=self._updater(); package=updater.download(info,progress=lambda d,t:self.update_progress.emit(int(d*100/max(1,t))))
+                if info.is_hot:
+                    updater.apply_hot_update(package,info); updater.launch_hot_restart(); self.update_done.emit("hot")
+                else:
+                    updater.launch_installer(package,update=True); self.update_done.emit("installer")
             except Exception as e:self.update_error.emit(str(e))
         threading.Thread(target=work,daemon=True,name="JARVIS-QT-UPDATER").start()
     def _update_fail(self,t):self.ring.hide();self.update_button.show();self.update_button.setToolTip("Falha: "+str(t)[:100]);self._status("ONLINE")
-    def _update_finish(self,p):
-        self.ring.setValue(100);QMessageBox.information(self,"JARVIS","Atualização baixada. O instalador será aberto.")
-        try:os.startfile(p)
-        except Exception:pass
+    def _update_finish(self,kind):
+        self.ring.setValue(100); self._status("ONLINE")
+        message="Atualização aplicada. O JARVIS será reiniciado." if kind=="hot" else "Atualização pronta. O instalador foi iniciado."
+        QMessageBox.information(self,"JARVIS",message); QTimer.singleShot(250,self.close)
     def closeEvent(self,e):
         try:self.voice_engine.stop() if self.voice_engine else None
         except Exception:pass
         self.bridge.close();super().closeEvent(e)
     def run(self):self.show();return self.app.exec()
     @staticmethod
-    def _css():return """QMainWindow#jarvisWindow,QWidget{color:#edf8ff;background:transparent}QMainWindow#jarvisWindow{background:#02070d}QFrame#sidebar{background:rgba(2,10,17,198);border-right:1px solid rgba(73,126,151,110)}QPushButton,QLineEdit{background:rgba(7,23,37,145);border:1px solid rgba(72,117,138,100);border-radius:11px;color:#edf8ff;padding:8px}QPushButton:hover{border-color:#61dfff}QListWidget#history{background:transparent;border:none}QWidget#historyRow{background:rgba(7,20,30,105);border-radius:11px}QPushButton#historyTitle,QPushButton#historyMenu{background:transparent;border:none;text-align:left}QPushButton#historyMenu{font-size:20px}QPushButton#updateButton{border:1px solid rgba(75,217,255,125);border-radius:22px;padding:0}QLabel#caption{color:#ffd84c;background:rgba(0,0,0,55);padding:8px;font-size:16px;font-weight:800}QFrame#chatFrame{background:rgba(3,10,15,105);border:1px solid rgba(93,156,181,55);border-radius:17px}QFrame#userBubble{background:rgba(14,30,39,180);border-radius:12px}QFrame#jarvisBubble{background:rgba(4,12,18,145);border-radius:12px}QFrame#composer{background:rgba(8,17,23,180);border:1px solid rgba(92,193,228,110);border-radius:25px}QTextEdit#composerEditor{background:transparent;border:none;color:#edf8ff;padding:7px}QPushButton#composerIconButton{background:transparent;border:none;border-radius:22px;padding:0}QMenu{background:#07121b;color:#eaf8ff;border:1px solid #28556a;padding:5px}QMenu::item{padding:7px 20px}QMenu::item:selected{background:#164a60}"""
+    def _css():return """QMainWindow#jarvisWindow,QWidget{color:#edf8ff;background:transparent}QMainWindow#jarvisWindow{background:#02070d}QFrame#sidebar{background:rgba(2,10,17,198);border-right:1px solid rgba(73,126,151,110)}QPushButton,QLineEdit{background:rgba(7,23,37,145);border:1px solid rgba(72,117,138,100);border-radius:11px;color:#edf8ff;padding:8px}QPushButton:hover{border-color:#61dfff}QListWidget#history{background:transparent;border:none}QWidget#historyRow{background:rgba(7,20,30,105);border-radius:11px}QPushButton#historyTitle,QPushButton#historyMenu{background:transparent;border:none;text-align:left}QPushButton#historyMenu{font-size:20px}QPushButton#updateButton{border:1px solid rgba(75,217,255,125);border-radius:22px;padding:0;color:#61dfff;font-size:25px;font-weight:900}QLabel#brandMark{color:#61dfff;font-size:31px;font-weight:900}QLabel#caption{color:#ffd84c;background:rgba(0,0,0,55);padding:8px;font-size:16px;font-weight:800}QFrame#chatFrame{background:rgba(3,10,15,105);border:1px solid rgba(93,156,181,55);border-radius:17px}QFrame#userBubble{background:rgba(14,30,39,180);border-radius:12px}QFrame#jarvisBubble{background:rgba(4,12,18,145);border-radius:12px}QFrame#composer{background:rgba(8,17,23,180);border:1px solid rgba(92,193,228,110);border-radius:25px}QTextEdit#composerEditor{background:transparent;border:none;color:#edf8ff;padding:7px}QPushButton#composerIconButton{background:transparent;border:none;border-radius:22px;padding:0}QMenu{background:#07121b;color:#eaf8ff;border:1px solid #28556a;padding:5px}QMenu::item{padding:7px 20px}QMenu::item:selected{background:#164a60}"""
 
 __all__=["JarvisGUI","REQUIRED_UI_ASSETS","FORBIDDEN_VISUAL_MODULES","asset_path","required_asset_paths","validate_approved_assets"]
