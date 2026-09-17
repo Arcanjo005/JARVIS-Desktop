@@ -164,7 +164,7 @@ def _activate_runtime(base: Path, *, track_boot: bool):
     os.environ["JARVIS_APP_DIR"] = str(base)
     try:
         from hot_update_runtime import activate_hot_runtime
-        return activate_hot_runtime(base, track_boot=track_boot)
+        return activate_hot_runtime2(base, track_boot=track_boot)
     except Exception as exc:
         _write_critical_error(f"Hot runtime ignored: {exc}")
         _write_startup_diagnostic("Hot runtime activation failed; using bundle.", exc=exc)
@@ -183,7 +183,12 @@ def _run_runtime_selftest(base: Path) -> None:
     def probe(name, func):
         try:
             value = func()
-            checks[name] = True if value is None else value
+            if value is None:
+                checks[name] = True
+            elif isinstance(value, (bool, str, int, float, list, dict)):
+                checks[name] = value
+            else:
+                checks[name] = True
         except Exception as exc:
             checks[name] = False
             failures.append(f"{name}: {type(exc).__name__}: {exc}")
@@ -221,12 +226,14 @@ def _run_runtime_selftest(base: Path) -> None:
     expected_hot = str(os.environ.get("JARVIS_EXPECT_HOT_VERSION") or "").strip()
     if expected_hot:
         activation_box = {"value": None}
+
         def activate_hot_for_probe():
             activation = _activate_runtime(base, track_boot=False)
             activation_box["value"] = activation
             if activation is None or str(getattr(activation, "version", "")) != expected_hot:
                 raise RuntimeError(f"Expected hot runtime {expected_hot} was not activated")
             return str(getattr(activation, "path", ""))
+
         def prove_hot_import_precedence():
             activation = activation_box.get("value")
             if activation is None:
@@ -244,10 +251,17 @@ def _run_runtime_selftest(base: Path) -> None:
             except Exception as exc:
                 raise RuntimeError(f"jarvis_version came from bundle: {origin}") from exc
             return {"version": actual, "origin": str(origin)}
+
         probe("hot_runtime_activation", activate_hot_for_probe)
         probe("hot_runtime_import_precedence", prove_hot_import_precedence)
 
-    payload = {"ok": not failures, "frozen": bool(getattr(sys, "frozen", False)), "app_dir": str(base), "checks": checks, "failures": failures}
+    payload = {
+        "ok": not failures,
+        "frozen": bool(getattr(sys, "frozen", False)),
+        "app_dir": str(base),
+        "checks": checks,
+        "failures": failures,
+    }
     try:
         import json
         target.parent.mkdir(parents=True, exist_ok=True)
