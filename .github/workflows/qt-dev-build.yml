@@ -1,4 +1,4 @@
-name: JARVIS Qt Dev Candidate
+name: JARVIS Qt Private Candidate
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: jarvis-qt-dev-candidate
+  group: jarvis-qt-private-candidate
   cancel-in-progress: true
 
 jobs:
@@ -60,68 +60,49 @@ jobs:
             -Repository "${{ github.repository }}" `
             -RunNumber "${{ github.run_number }}"
 
-      - name: Upload private CI candidate
-        uses: actions/upload-artifact@v4
-        with:
-          name: JARVIS-Qt-Dev-${{ env.DEV_BUILD_ID }}
-          path: |
-            release/JARVIS_Setup_${{ env.DEV_VERSION }}.exe
-            release/JARVIS_Setup_${{ env.DEV_VERSION }}.exe.sha256
-            release/dev-build.json
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish Dev prerelease asset
+      - name: Publish installer to private draft release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "qt-dev-latest"
           $repo = "${{ github.repository }}"
-          gh release view $tag --repo $repo 2>$null | Out-Null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag `
-              --repo $repo `
-              --prerelease `
-              --target "${{ github.sha }}" `
-              --title "JARVIS Qt Dev - canal de testes" `
-              --notes "Build experimental da reconstrução Qt. Não é Stable e não é oferecida a usuários do canal Stable."
-            if ($LASTEXITCODE -ne 0) { throw "Could not create Dev prerelease" }
-          }
+          $tag = "qt-dev-private-$env:DEV_BUILD_ID"
+          $title = "JARVIS Qt Private $env:DEV_BUILD_ID"
+          $notes = @"
+          Private Qt candidate for manual validation.
+
+          Version: $env:DEV_VERSION
+          Build: $env:DEV_BUILD_ID
+          Commit: ${{ github.sha }}
+
+          This release stays in DRAFT and is not published as prerelease/latest.
+          The public Dev manifest is intentionally not changed.
+          "@
+
+          gh release create $tag `
+            --repo $repo `
+            --draft `
+            --target "${{ github.sha }}" `
+            --title $title `
+            --notes $notes
+          if ($LASTEXITCODE -ne 0) { throw "Could not create private draft release" }
+
           gh release upload $tag `
             "release/JARVIS_Setup_$env:DEV_VERSION.exe" `
             "release/JARVIS_Setup_$env:DEV_VERSION.exe.sha256" `
-            --repo $repo `
-            --clobber
-          if ($LASTEXITCODE -ne 0) { throw "Could not upload Dev installer" }
+            "release/dev-build.json" `
+            --repo $repo
+          if ($LASTEXITCODE -ne 0) { throw "Could not upload private installer" }
 
-      - name: Update Dev manifest
+          Write-Host "PRIVATE_DRAFT_TAG=$tag"
+          Write-Host "DEV_BUILD_ID=$env:DEV_BUILD_ID"
+
+      - name: Confirm private candidate identity
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           $identity = Get-Content -LiteralPath "release/dev-build.json" -Raw | ConvertFrom-Json
-          $assetName = "JARVIS_Setup_$env:DEV_VERSION.exe"
-          $assetUrl = "https://github.com/${{ github.repository }}/releases/download/qt-dev-latest/$assetName"
-          $manifest = [ordered]@{
-            available = $true
-            channel = "dev"
-            version = [string]$identity.version
-            build_id = [string]$identity.build_id
-            installer_name = $assetName
-            download_url = $assetUrl
-            sha256 = [string]$identity.sha256
-            size = [int64]$identity.size
-            tag = "qt-dev-latest"
-            html_url = "https://github.com/${{ github.repository }}/releases/tag/qt-dev-latest"
-            notes = "Reconstrução Qt - build $env:DEV_BUILD_ID"
-          }
-          $manifest | ConvertTo-Json | Set-Content -LiteralPath "updates/dev.json" -Encoding utf8
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add updates/dev.json
-          git diff --cached --quiet
-          if ($LASTEXITCODE -ne 0) {
-            git commit -m "dev: publish $env:DEV_BUILD_ID manifest"
-            git push origin HEAD:ui/qt-reference-rebuild
-          }
+          Write-Host "Version: $($identity.version)"
+          Write-Host "Build: $($identity.build_id)"
+          Write-Host "SHA256: $($identity.sha256)"
+          Write-Host "Size: $($identity.size)"
+          if ([string]$identity.build_id -ne $env:DEV_BUILD_ID) { throw "Build identity mismatch" }
