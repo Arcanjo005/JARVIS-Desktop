@@ -73,7 +73,7 @@ jobs:
           python jarvis_qt_ui_smoke.py
           if ($LASTEXITCODE -ne 0) { throw "Single-source Qt smoke failed" }
 
-      - name: Build single-source Qt Dev installer
+      - name: Build single-source Qt Dev installer and portable ZIP
         shell: pwsh
         run: |
           ./build/build_qt_dev.ps1 `
@@ -82,7 +82,7 @@ jobs:
             -Repository "${{ github.repository }}" `
             -RunNumber "${{ github.run_number }}"
 
-      - name: Publish installer to private draft release
+      - name: Publish installer and portable ZIP to private draft release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -91,13 +91,14 @@ jobs:
           $tag = "qt-dev-private-$env:DEV_BUILD_ID"
           $title = "JARVIS Qt Private $env:DEV_BUILD_ID"
           $notes = @"
-          Private Qt candidate for manual validation.
+          Private Qt candidate for manual validation. Includes installer and verified portable ZIP.
 
           Version: $env:DEV_VERSION
           Build: $env:DEV_BUILD_ID
           Commit: ${{ github.sha }}
           UI source: gui.py only
           Assets: workspace_bg.jpg, sphere_3d.webp (reconstructed from approved Git history)
+          Portable package: extracted and runtime-selftested before publication
 
           This release stays in DRAFT and is not published as prerelease/latest.
           The public Stable release and public update manifest are not changed.
@@ -111,9 +112,16 @@ jobs:
             --notes $notes
           if ($LASTEXITCODE -ne 0) { throw "Could not create private draft release" }
 
+          $portable = Get-ChildItem -LiteralPath "release" -Filter ("JARVIS_Portable_" + $env:DEV_VERSION + "_dev-*.zip") | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $portable) { throw "Portable ZIP was not generated" }
+          $portableSha = "$($portable.FullName).sha256"
+          if (!(Test-Path -LiteralPath $portableSha)) { throw "Portable ZIP SHA256 file is missing" }
+
           gh release upload $tag `
             "release/JARVIS_Setup_$env:DEV_VERSION.exe" `
             "release/JARVIS_Setup_$env:DEV_VERSION.exe.sha256" `
+            "$($portable.FullName)" `
+            "$portableSha" `
             "release/dev-build.json" `
             --repo $repo
           if ($LASTEXITCODE -ne 0) { throw "Could not upload private installer" }
@@ -130,5 +138,12 @@ jobs:
           Write-Host "SHA256: $($identity.sha256)"
           Write-Host "Size: $($identity.size)"
           Write-Host "UI source: $($identity.ui_source)"
+          Write-Host "Portable: $($identity.portable_name)"
+          Write-Host "Portable SHA256: $($identity.portable_sha256)"
+          Write-Host "Portable size: $($identity.portable_size)"
           if ([string]$identity.build_id -ne $env:DEV_BUILD_ID) { throw "Build identity mismatch" }
           if ([string]$identity.ui_source -ne "gui.py") { throw "UI source identity mismatch" }
+          $portablePath = Join-Path "release" ([string]$identity.portable_name)
+          if (!(Test-Path -LiteralPath $portablePath)) { throw "Portable ZIP identity points to missing file" }
+          $portableHash = (Get-FileHash -LiteralPath $portablePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($portableHash -ne ([string]$identity.portable_sha256).ToLowerInvariant()) { throw "Portable ZIP hash mismatch" }
