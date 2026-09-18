@@ -151,6 +151,39 @@ if (-not $Report.ok -or -not $Report.checks.pyside6 -or -not $Report.checks.sing
     throw "Frozen runtime did not confirm the single-source Qt UI"
 }
 
+# Build a portable ZIP from the exact onedir tree that passed the frozen runtime selftest.
+New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
+$PortableName = "JARVIS_Portable_${Version}_${BuildId}.zip"
+$Portable = Join-Path $ReleaseDir $PortableName
+$PortableSha = "$Portable.sha256"
+Remove-Item -Force $Portable, $PortableSha -ErrorAction SilentlyContinue
+Compress-Archive -Path (Join-Path $DistDir "JARVIS\*") -DestinationPath $Portable -CompressionLevel Optimal
+Require-Path $Portable "portable Qt Dev ZIP"
+
+# Verify the actual ZIP payload after extraction to catch missing files/path issues.
+$PortableVerify = Join-Path $WorkDir "portable-verify"
+Remove-Item -Recurse -Force $PortableVerify -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $PortableVerify | Out-Null
+Expand-Archive -LiteralPath $Portable -DestinationPath $PortableVerify -Force
+$PortableExe = Join-Path $PortableVerify "JARVIS.exe"
+Require-Path $PortableExe "portable JARVIS.exe"
+foreach ($Asset in $RequiredAssets) {
+    Require-Path (Join-Path $PortableVerify "assets\$Asset") "portable approved UI asset $Asset"
+}
+$PortableReport = Join-Path $PortableVerify "portable-runtime-selftest.json"
+$PortableRuntime = Start-Process -FilePath $PortableExe -ArgumentList @("--runtime-selftest", $PortableReport) -Wait -PassThru
+if ($PortableRuntime.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $PortableReport) { Write-Host (Get-Content -LiteralPath $PortableReport -Raw) }
+    throw "Portable ZIP runtime selftest failed: $($PortableRuntime.ExitCode)"
+}
+$PortableRuntimeReport = Get-Content -LiteralPath $PortableReport -Raw | ConvertFrom-Json
+if (-not $PortableRuntimeReport.ok -or -not $PortableRuntimeReport.checks.pyside6 -or -not $PortableRuntimeReport.checks.single_qt_ui) {
+    Write-Host (Get-Content -LiteralPath $PortableReport -Raw)
+    throw "Portable ZIP did not confirm the single-source Qt UI"
+}
+$PortableHash = (Get-FileHash -LiteralPath $Portable -Algorithm SHA256).Hash.ToLowerInvariant()
+"$PortableHash  $PortableName" | Set-Content -LiteralPath $PortableSha -Encoding ascii
+
 $Iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
 if (-not $Iscc) { $Iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source }
 if (-not $Iscc) {
@@ -177,8 +210,11 @@ $Identity = @{
     channel = "dev"
     sha256 = $Hash
     size = (Get-Item -LiteralPath $Installer).Length
+    portable_name = $PortableName
+    portable_sha256 = $PortableHash
+    portable_size = (Get-Item -LiteralPath $Portable).Length
     ui_source = "gui.py"
     approved_assets = $RequiredAssets
 } | ConvertTo-Json
 Set-Content -LiteralPath (Join-Path $ReleaseDir "dev-build.json") -Value $Identity -Encoding utf8
-Write-Host "[QT-DEV] OK $Version / $BuildId / $Hash"
+Write-Host "[QT-DEV] OK $Version / $BuildId / installer=$Hash / portable=$PortableHash"
