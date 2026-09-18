@@ -129,6 +129,17 @@ jobs:
           Write-Host "PRIVATE_DRAFT_TAG=$tag"
           Write-Host "DEV_BUILD_ID=$env:DEV_BUILD_ID"
 
+      - name: Upload portable ZIP for ChatGPT handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-portable-${{ env.DEV_VERSION }}-${{ env.DEV_BUILD_ID }}
+          path: |
+            release/JARVIS_Portable_${{ env.DEV_VERSION }}_${{ env.DEV_BUILD_ID }}.zip
+            release/JARVIS_Portable_${{ env.DEV_VERSION }}_${{ env.DEV_BUILD_ID }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
       - name: Confirm private candidate identity
         shell: pwsh
         run: |
