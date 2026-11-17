@@ -1,6 +1,8 @@
 name: JARVIS V35 - Aplicativo Windows sem Python local
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       source_tag:
@@ -13,6 +15,7 @@ permissions:
 
 jobs:
   windows-app:
+    if: github.event_name != 'release' || github.event.release.tag_name == 'v35-source'
     runs-on: windows-latest
     timeout-minutes: 120
     steps:
@@ -20,7 +23,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_TAG: ${{ inputs.source_tag }}
+          SOURCE_TAG: ${{ github.event.release.tag_name || inputs.source_tag }}
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path source-download | Out-Null
