@@ -1,0 +1,108 @@
+name: JARVIS V35 - Aplicativo Windows sem Python local
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: "Release que contem o ZIP original da V35"
+        required: true
+        default: "v35-source"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-app:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Baixar o ZIP V35 fornecido pelo proprietario
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_TAG: ${{ inputs.source_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path source-download | Out-Null
+          gh release download $env:SOURCE_TAG --repo "${{ github.repository }}" --pattern "JARVIS_AVENGERS_SMART_TOOLS_CORRIGIDO_V35.zip" --dir source-download
+          if ($LASTEXITCODE -ne 0) { throw 'ZIP V35 nao encontrado na release de origem.' }
+          $archive = 'source-download/JARVIS_AVENGERS_SMART_TOOLS_CORRIGIDO_V35.zip'
+          Expand-Archive -LiteralPath $archive -DestinationPath src -Force
+          if (-not (Test-Path src/JARVIS_V35/main.py)) { throw 'ZIP nao contem a pasta JARVIS_V35/main.py' }
+          if (Test-Path src/JARVIS_V35/.env) { throw 'Segredo .env nao deve ser distribuido no aplicativo.' }
+          if (-not (Test-Path src/JARVIS_V35/assets/voices/cadu/pt_BR-cadu-medium.onnx)) { throw 'A voz Cadu obrigatoria esta ausente.' }
+
+      - name: Python apenas no servidor GitHub
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependencias no runner
+        shell: pwsh
+        working-directory: src/JARVIS_V35
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Falha na instalacao das dependencias do projeto.' }
+          python -m pip install -r requirements-test.txt "pyinstaller>=6.10,<7"
+          if ($LASTEXITCODE -ne 0) { throw 'Falha na instalacao das ferramentas de build.' }
+
+      - name: Testes V35 sem chaves
+        shell: pwsh
+        working-directory: src/JARVIS_V35
+        run: |
+          python VALIDAR_V35.py --output-dir "$env:RUNNER_TEMP/validacao-v35"
+          if ($LASTEXITCODE -ne 0) { throw 'Teste V35 falhou; build interrompida.' }
+
+      - name: Gerar JARVIS.exe e empacotar voz/recursos
+        shell: pwsh
+        working-directory: src/JARVIS_V35
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $args = @(
+            '--noconfirm', '--clean', '--onedir', '--windowed',
+            '--name', 'JARVIS',
+            '--icon', 'jarvis.ico',
+            '--collect-all', 'customtkinter',
+            '--collect-all', 'piper',
+            '--collect-all', 'onnxruntime',
+            '--collect-all', 'vosk',
+            '--collect-all', 'faster_whisper',
+            '--collect-all', 'PySide6',
+            '--collect-submodules', 'pystray',
+            '--add-data', 'assets;assets',
+            '--add-data', 'data/voice_models;data/voice_models',
+            '--add-data', '.env.example;.',
+            '--add-data', 'jarvis.ico;.',
+            '--add-data', 'jarvis_state_start.wav;.',
+            '--add-data', 'jarvis_state_listening.wav;.',
+            '--distpath', "$env:RUNNER_TEMP/jarvis-dist",
+            '--workpath', "$env:RUNNER_TEMP/jarvis-pyinstaller-work",
+            'main.py'
+          )
+          python -m PyInstaller @args
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller falhou.' }
+          $folder = Join-Path $env:RUNNER_TEMP 'jarvis-dist/JARVIS'
+          if (-not (Test-Path (Join-Path $folder 'JARVIS.exe'))) { throw 'JARVIS.exe nao foi gerado.' }
+          Copy-Item 'LEIA_PRIMEIRO_V35.md' -Destination $folder
+          Copy-Item 'ATUALIZACAO_V35.md' -Destination $folder
+          Copy-Item '.env.example' -Destination (Join-Path $folder '.env.example') -Force
+          Compress-Archive -Path "$folder/*" -DestinationPath "$env:RUNNER_TEMP/JARVIS_V35_Windows_Portatil.zip" -Force
+
+      - name: Publicar aplicativo para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: JARVIS-V35-Windows-APP
+          path: ${{ runner.temp }}/JARVIS_V35_Windows_Portatil.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publicar relatorio de validacao
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JARVIS-V35-Validacao
+          path: ${{ runner.temp }}/validacao-v35/
+          if-no-files-found: ignore
+          retention-days: 14
